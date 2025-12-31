@@ -18,13 +18,15 @@ sorted manifest with the SHA-256 of every file inside without touching disk.
 | `pv` | Streams large files with progress bars when compressing “big” inputs. |
 | `xz` | Default compressor for “small” files and for `pixz`/`xz` outputs. |
 | `pixz` | Default compressor for “big” files; enables parallel xz for large archives. |
+| `7z` **or** `7zr` | Required for `analyze-archive.sh` when inspecting `.7z` archives. |
+| `unzip` | Required for `analyze-archive.sh` when inspecting `.zip` archives. |
 | GNU `parallel` | Runs many small compression jobs concurrently. |
 
 These tools must be on `$PATH`; the script will exit early when a required tool
 is missing. On Debian/Ubuntu systems you can install the full toolset with:
 
 ```
-sudo apt install bash coreutils pv xz-utils pixz parallel
+sudo apt install bash coreutils pv xz-utils pixz parallel p7zip-full pigz pbzip2 pixz pzstd unzip zstd
 ```
 
 ## Optional tools
@@ -33,8 +35,11 @@ Install the tools below only if you intend to select the corresponding flags:
 
 | Tool | When it is needed |
 | --- | --- |
-| `zstd` | Use `--small zstd` for small files or `--big zstd` for large files. |
-| `pzstd` | Use `--big pzstd` for threaded Zstandard compression. |
+| `zstd` | Use `--small zstd` for small files or `--big zstd` for large files (also needed by `decompress.sh`). |
+| `pzstd` | Use `--big pzstd` for threaded Zstandard compression and for streaming `.tar.zst/.tzst` archives in `analyze-archive.sh`. |
+| `pigz` | Required by `analyze-archive.sh` to stream `.tar.gz/.tgz` archives. |
+| `pbzip2` | Required by `analyze-archive.sh` to stream `.tar.bz2/.tbz` archives. |
+| `pixz` | Required by `analyze-archive.sh` to stream `.tar.xz/.txz/.tlz` archives when the default `pixz` binary is not already present. |
 
 ## Usage
 
@@ -68,9 +73,13 @@ ones append.
 ## Archive inspection (7z / tar / zip)
 
 Run `./analyze-archive.sh ARCHIVE` to compute the SHA-256 of every entry inside a
-7z, tar, or zip file without extracting it. The script writes each digest and
-path to `ARCHIVE.sha256` by default, sorted by path; override the destination
-with `--output FILE`. Add `--quiet` to suppress progress logs.
+7z, tar (including `.tar.gz/.tgz`, `.tar.bz2/.tbz`, `.tar.xz/.txz`, `.tar.zst/.tzst`),
+or zip file without extracting it to disk. Each digest is streamed to stdout for
+live progress and also written to `ARCHIVE.sha256`, which is sorted by path
+before being saved; override the destination with `--output FILE`. Add `--quiet`
+to suppress the progress logs if desired. The script automatically picks the
+available `7z`/`7zr` binary and uses parallel decompressors (`pigz`, `pbzip2`,
+`pixz`, `pzstd`) to handle compressed tarballs efficiently.
 
 ## Decompression
 

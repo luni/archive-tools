@@ -46,7 +46,7 @@ detect_archive_type() {
   local archive="$1"
   case "${archive,,}" in
     *.7z) echo "7z" ;;
-    *.tar|*.tar.*|*.tgz|*.tbz|*.tbz2|*.txz|*.tlz|*.taz|*.tar.gz|*.tar.xz|*.tar.zst) echo "tar" ;;
+    *.tar|*.tar.*|*.tgz|*.tbz|*.tbz2|*.txz|*.tlz|*.taz|*.tar.gz|*.tar.xz|*.tar.zst|*.tar.bz2|*.tzst) echo "tar" ;;
     *.zip) echo "zip" ;;
     *) echo "unknown" ;;
   esac
@@ -85,13 +85,55 @@ list_archive_files_7z() {
   fi
 }
 
+detect_tar_compression() {
+  local archive="${1,,}"
+  case "$archive" in
+    *.tar.gz|*.tgz|*.taz) echo "gz" ;;
+    *.tar.bz2|*.tbz|*.tbz2) echo "bz2" ;;
+    *.tar.xz|*.txz|*.tlz) echo "xz" ;;
+    *.tar.zst|*.tzst) echo "zst" ;;
+    *) echo "none" ;;
+  esac
+}
+
+require_tar_filter_tool() {
+  case "$TAR_COMPRESSION" in
+    gz) require_tool pigz ;;
+    bz2) require_tool pbzip2 ;;
+    xz) require_tool pixz ;;
+    zst) require_tool pzstd ;;
+  esac
+}
+
+tar_list_entries() {
+  local archive="$1"
+  case "$TAR_COMPRESSION" in
+    gz) pigz -dc -- "$archive" | tar -tf - ;;
+    bz2) pbzip2 -dc -- "$archive" | tar -tf - ;;
+    xz) pixz -d -c -- "$archive" | tar -tf - ;;
+    zst) pzstd -d -q -c -- "$archive" | tar -tf - ;;
+    none) tar -tf -- "$archive" ;;
+  esac
+}
+
+tar_extract_entry() {
+  local archive="$1" entry="$2"
+  case "$TAR_COMPRESSION" in
+    gz) pigz -dc -- "$archive" | tar -xOf - -- "$entry" ;;
+    bz2) pbzip2 -dc -- "$archive" | tar -xOf - -- "$entry" ;;
+    xz) pixz -d -c -- "$archive" | tar -xOf - -- "$entry" ;;
+    zst) pzstd -d -q -c -- "$archive" | tar -xOf - -- "$entry" ;;
+    none) tar -xOf -- "$archive" -- "$entry" ;;
+  esac
+}
+
 list_archive_files_tar() {
   local archive="$1" entry
   while IFS= read -r entry; do
     [[ -z "$entry" ]] && continue
     [[ "$entry" == */ ]] && continue
     printf '%s\0' "$entry"
-  done < <(tar -tf -- "$archive")
+  done < <(tar_list_entries "$archive")
 }
 
 list_archive_files_zip() {
@@ -121,7 +163,7 @@ stream_entry() {
       "$SEVENZ_BIN" x -so -- "$archive" "$entry"
       ;;
     tar)
-      tar -xOf -- "$archive" "$entry"
+      tar_extract_entry "$archive" "$entry"
       ;;
     zip)
       unzip -p -- "$archive" "$entry"
@@ -142,6 +184,7 @@ OUTPUT_FILE=""
 QUIET=0
 ARCHIVE_TYPE="7z"
 SEVENZ_BIN="7z"
+TAR_COMPRESSION="none"
 
 select_7z_tool() {
   if command -v 7z >/dev/null 2>&1; then
@@ -208,6 +251,8 @@ case "$ARCHIVE_TYPE" in
     ;;
   tar)
     require_tool tar
+    TAR_COMPRESSION="$(detect_tar_compression "$ARCHIVE")"
+    require_tar_filter_tool
     ;;
   7z)
     select_7z_tool
