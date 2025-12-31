@@ -19,7 +19,7 @@ jobs:
         run: |
           sudo apt-get update
           DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends \
-            xz-utils pixz zstd parallel pv
+            xz-utils pixz zstd parallel pv python3
           sudo rm -rf /var/lib/apt/lists/*
 
       - name: Run tests
