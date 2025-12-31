@@ -1,6 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+tmp_manifest=""
+tar_stream_helper=""
+
+cleanup() {
+  if [[ -n "$tmp_manifest" && -f "$tmp_manifest" ]]; then
+    rm -f "$tmp_manifest"
+  fi
+  if [[ -n "$tar_stream_helper" && -f "$tar_stream_helper" ]]; then
+    rm -f "$tar_stream_helper"
+  fi
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -124,6 +136,52 @@ tar_extract_entry() {
     xz) pixz -d -c -- "$archive" | tar -xOf - -- "$entry" ;;
     zst) pzstd -d -q -c -- "$archive" | tar -xOf - -- "$entry" ;;
     none) tar -xOf -- "$archive" -- "$entry" ;;
+  esac
+}
+
+create_tar_stream_helper() {
+  if [[ -n "$tar_stream_helper" && -x "$tar_stream_helper" ]]; then
+    return 0
+  fi
+  tar_stream_helper="$(mktemp)"
+  cat >"$tar_stream_helper" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -z "${TAR_MODE:-}" || "${TAR_MODE:0:1}" != "-" ]]; then
+  exit 0
+fi
+if [[ "${QUIET:-0}" -eq 0 ]]; then
+  printf 'processing: %s\n' "$TAR_FILENAME" >&2
+fi
+read -r hash _ < <(sha256sum)
+printf '%s\t%s\n' "$hash" "$TAR_FILENAME"
+EOF
+  chmod +x "$tar_stream_helper"
+}
+
+stream_tar_archive_entries() {
+  local archive="$1"
+  create_tar_stream_helper
+  local tar_cmd=(tar --extract --to-command="$tar_stream_helper")
+  case "$TAR_COMPRESSION" in
+    gz)
+      pigz -dc -- "$archive" | "${tar_cmd[@]}" -f -
+      ;;
+    bz2)
+      pbzip2 -dc -- "$archive" | "${tar_cmd[@]}" -f -
+      ;;
+    xz)
+      pixz -d -c -- "$archive" | "${tar_cmd[@]}" -f -
+      ;;
+    zst)
+      pzstd -d -q -c -- "$archive" | "${tar_cmd[@]}" -f -
+      ;;
+    none)
+      "${tar_cmd[@]}" -f "$archive"
+      ;;
+    *)
+      die "Unsupported tar compression: $TAR_COMPRESSION"
+      ;;
   esac
 }
 
@@ -270,19 +328,30 @@ fi
 mkdir -p -- "$(dirname -- "$OUTPUT_FILE")"
 : >"$OUTPUT_FILE"
 tmp_manifest="$(mktemp)"
-trap 'rm -f "$tmp_manifest"' EXIT
+trap cleanup EXIT
+
+export QUIET
 
 log "Writing SHA-256 manifest to $OUTPUT_FILE"
 
 files_processed=0
-while IFS= read -r -d '' entry; do
-  files_processed=$((files_processed + 1))
-  log "processing: $entry"
-  if ! hash="$(compute_sha256 "$ARCHIVE" "$entry")"; then
-    die "Failed to compute SHA-256 for $entry"
+if [[ "$ARCHIVE_TYPE" == "tar" ]]; then
+  if ! stream_tar_archive_entries "$ARCHIVE" | tee -a "$tmp_manifest"; then
+    die "Failed to process tar archive $ARCHIVE"
   fi
-  printf '%s\t%s\n' "$hash" "$entry" | tee -a "$tmp_manifest"
-done < <(list_archive_files "$ARCHIVE")
+  if [[ -s "$tmp_manifest" ]]; then
+    files_processed="$(wc -l <"$tmp_manifest")"
+  fi
+else
+  while IFS= read -r -d '' entry; do
+    files_processed=$((files_processed + 1))
+    log "processing: $entry"
+    if ! hash="$(compute_sha256 "$ARCHIVE" "$entry")"; then
+      die "Failed to compute SHA-256 for $entry"
+    fi
+    printf '%s\t%s\n' "$hash" "$entry" | tee -a "$tmp_manifest"
+  done < <(list_archive_files "$ARCHIVE")
+fi
 
 if [[ "$files_processed" -eq 0 ]]; then
   log "No files found inside archive."
