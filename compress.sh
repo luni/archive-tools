@@ -20,7 +20,7 @@ ZSTD_LEVEL="-6"
 PZSTD_LEVEL="-10"
 
 LOG=1
-EXTENSIONS=(tar sql txt csv ibd)
+EXTENSIONS=(tar sql txt csv ibd xlsx docx)
 EXTENSIONS_CUSTOMIZED=0
 
 usage() {

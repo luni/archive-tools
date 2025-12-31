@@ -6,6 +6,8 @@ compresses them using sensible defaults. Smaller files are processed in
 parallel, while bigger blobs are streamed sequentially with progress output.
 `decompress.sh` reverses the process for `.xz`/`.txz` and `.zst`/`.tzst`
 artifacts while restoring the original modification time.
+`analyze-archive.sh` inspects `.7z`, `.tar*`, or `.zip` archives and produces a
+sorted manifest with the SHA-256 of every file inside without touching disk.
 
 ## Required tools
 
@@ -62,6 +64,13 @@ By default the script targets `*.tar`, `*.sql`, `*.txt`, `*.csv`, and `*.ibd`.
 Use `--ext EXT` (repeatable, accepts comma-separated values) to provide your own
 extension list. The first `--ext` invocation replaces the defaults; subsequent
 ones append.
+
+## Archive inspection (7z / tar / zip)
+
+Run `./analyze-archive.sh ARCHIVE` to compute the SHA-256 of every entry inside a
+7z, tar, or zip file without extracting it. The script writes each digest and
+path to `ARCHIVE.sha256` by default, sorted by path; override the destination
+with `--output FILE`. Add `--quiet` to suppress progress logs.
 
 ## Decompression
 
