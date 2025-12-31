@@ -5,6 +5,9 @@ set -euo pipefail
 SCAN_DIR="."
 SHA1_FILE=""
 SHA1_APPEND=0
+SHA256_FILE=""
+SHA256_APPEND=0
+CHECKSUM_DELIM=$'\x1f'
 
 THRESHOLD_BYTES=$((100 * 1024 * 1024))   # 100 MiB
 SMALL_JOBS=8
@@ -29,6 +32,8 @@ Options:
   -d, --dir DIR           Directory to scan (default: .)
   -s, --sha1 FILE         Create/truncate FILE and write SHA1 of originals (before compression per file)
       --sha1-append        Append to FILE instead of truncating
+      --sha256 FILE        Create/truncate FILE and write SHA256 of originals (before compression per file)
+      --sha256-append      Append to FILE instead of truncating
   -t, --threshold SIZE    Small/Big split (default: 100MiB). Examples: 100M, 200MiB, 50000000
   -j, --jobs N            Parallel jobs for small files (default: 8)
 
@@ -59,7 +64,53 @@ parse_size() {
   exit 2
 }
 
-log() { [[ "$LOG" == "1" ]] && printf '%s\n' "$*" >&2; }
+log() {
+  if [[ "$LOG" == "1" ]]; then
+    printf '%s\n' "$*" >&2
+  fi
+}
+
+prepare_checksum_file() {
+  local file="$1" append_flag="$2"
+  [[ -z "$file" ]] && return 0
+  mkdir -p -- "$(dirname -- "$file")" 2>/dev/null || true
+  if [[ "$append_flag" -eq 1 ]]; then
+    : >>"$file"
+  else
+    : >"$file"
+  fi
+}
+
+emit_checksum_lines() {
+  local sha1_line="${1-}" sha256_line="${2-}"
+  if [[ -n "$sha1_line" ]]; then
+    printf 'sha1%s%s\n' "$CHECKSUM_DELIM" "$sha1_line"
+  fi
+  if [[ -n "$sha256_line" ]]; then
+    printf 'sha256%s%s\n' "$CHECKSUM_DELIM" "$sha256_line"
+  fi
+}
+
+append_checksum_line() {
+  local algo="$1" line="$2"
+  case "$algo" in
+    sha1)
+      [[ -n "$SHA1_FILE" ]] && printf '%s\n' "$line" >>"$SHA1_FILE"
+      ;;
+    sha256)
+      [[ -n "$SHA256_FILE" ]] && printf '%s\n' "$line" >>"$SHA256_FILE"
+      ;;
+  esac
+}
+
+fanout_checksums() {
+  local line algo payload
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    IFS=$CHECKSUM_DELIM read -r algo payload <<<"$line"
+    append_checksum_line "$algo" "$payload"
+  done
+}
 
 # --- arg parsing ---
 while [[ $# -gt 0 ]]; do
@@ -67,6 +118,8 @@ while [[ $# -gt 0 ]]; do
     -d|--dir) SCAN_DIR="$2"; shift 2 ;;
     -s|--sha1) SHA1_FILE="$2"; shift 2 ;;
     --sha1-append) SHA1_APPEND=1; shift ;;
+    --sha256) SHA256_FILE="$2"; shift 2 ;;
+    --sha256-append) SHA256_APPEND=1; shift ;;
     -t|--threshold) THRESHOLD_BYTES="$(parse_size "$2")"; shift 2 ;;
     -j|--jobs) SMALL_JOBS="$2"; shift 2 ;;
     --small) SMALL_COMPRESSOR="$2"; shift 2 ;;
@@ -95,15 +148,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Create/truncate sha1 file up front (if requested)
-if [[ -n "$SHA1_FILE" ]]; then
-  mkdir -p -- "$(dirname -- "$SHA1_FILE")" 2>/dev/null || true
-  if [[ "$SHA1_APPEND" -eq 1 ]]; then
-    : >>"$SHA1_FILE"
-  else
-    : >"$SHA1_FILE"
-  fi
-fi
+# Create/truncate checksum files up front (if requested)
+prepare_checksum_file "$SHA1_FILE" "$SHA1_APPEND"
+prepare_checksum_file "$SHA256_FILE" "$SHA256_APPEND"
 
 fsize() {
   stat -c '%s' -- "$1" 2>/dev/null || stat -f '%z' -- "$1"
@@ -126,16 +173,19 @@ out_name() {
 }
 
 compress_small() {
-  local f="$1" out tmp sha=""
+  local f="$1" out tmp sha1_line="" sha256_line=""
   out="$(out_name "$f" "$SMALL_COMPRESSOR")"
   [[ -e "$out" ]] && { log "skip: $f"; return 0; }
 
   tmp="${out}.tmp.${PARALLEL_SEQ:-$$}"
   rm -f -- "$tmp"
 
-  # compute SHA1 BEFORE compression (only written out if compression succeeds)
+  # compute checksums BEFORE compression (only written out if compression succeeds)
   if [[ -n "${SHA1_FILE:-}" ]]; then
-    sha="$(sha1sum -- "$f")"
+    sha1_line="$(sha1sum -- "$f")"
+  fi
+  if [[ -n "${SHA256_FILE:-}" ]]; then
+    sha256_line="$(sha256sum -- "$f")"
   fi
 
   log "small(${SMALL_COMPRESSOR}): $f -> $out"
@@ -158,12 +208,11 @@ compress_small() {
   mv -f -- "$tmp" "$out"
   rm -f -- "$f"
 
-  # emit checksum line (parallel is run with --lb so lines stay intact)
-  [[ -n "${SHA1_FILE:-}" ]] && printf '%s\n' "$sha"
+  emit_checksum_lines "$sha1_line" "$sha256_line"
 }
 
 compress_big_seq() {
-  local f="$1" out tmp sha=""
+  local f="$1" out tmp sha1_line="" sha256_line=""
   out="$(out_name "$f" "$BIG_COMPRESSOR")"
   [[ -e "$out" ]] && { log "skip: $f"; return 0; }
 
@@ -171,7 +220,10 @@ compress_big_seq() {
   rm -f -- "$tmp"
 
   if [[ -n "$SHA1_FILE" ]]; then
-    sha="$(sha1sum -- "$f")"
+    sha1_line="$(sha1sum -- "$f")"
+  fi
+  if [[ -n "$SHA256_FILE" ]]; then
+    sha256_line="$(sha256sum -- "$f")"
   fi
 
   log "big(${BIG_COMPRESSOR}): $f -> $out"
@@ -200,11 +252,12 @@ compress_big_seq() {
   mv -f -- "$tmp" "$out"
   rm -f -- "$f"
 
-  [[ -n "$SHA1_FILE" ]] && printf '%s\n' "$sha"
+  [[ -n "$sha1_line" ]] && append_checksum_line sha1 "$sha1_line"
+  [[ -n "$sha256_line" ]] && append_checksum_line sha256 "$sha256_line"
 }
 
-export -f compress_small out_name
-export SMALL_COMPRESSOR XZ_LEVEL ZSTD_LEVEL LOG SHA1_FILE
+export -f compress_small out_name emit_checksum_lines log
+export SMALL_COMPRESSOR XZ_LEVEL ZSTD_LEVEL LOG SHA1_FILE SHA256_FILE CHECKSUM_DELIM
 
 small_list="$(mktemp)"
 big_list="$(mktemp)"
@@ -239,20 +292,20 @@ while IFS= read -r -d '' f; do
   else
     printf '%s\0' "$f" >>"$big_list"
   fi
-done
+done || true
 
 # small files in parallel
-if [[ -n "$SHA1_FILE" ]]; then
-  parallel -0 --no-run-if-empty --bar --lb -j "$SMALL_JOBS" compress_small {} :::: "$small_list" >>"$SHA1_FILE"
+if [[ -n "$SHA1_FILE" || -n "$SHA256_FILE" ]]; then
+  parallel -0 --no-run-if-empty --bar --lb -j "$SMALL_JOBS" compress_small {} :::: "$small_list" | fanout_checksums
 else
   parallel -0 --no-run-if-empty --bar -j "$SMALL_JOBS" compress_small {} :::: "$small_list"
 fi
 
 # big files sequential
-while IFS= read -r -d '' f; do
-  if [[ -n "$SHA1_FILE" ]]; then
-    compress_big_seq "$f" >>"$SHA1_FILE"
-  else
+if [[ -s "$big_list" ]]; then
+  while IFS= read -r -d '' f; do
     compress_big_seq "$f"
-  fi
-done <"$big_list"
+  done <"$big_list" || true
+fi
+
+exit 0

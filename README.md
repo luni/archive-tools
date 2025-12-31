@@ -12,14 +12,18 @@ artifacts while restoring the original modification time.
 | Tool | Why |
 | --- | --- |
 | `bash` (4+) | Script language features such as `${var,,}` and `[[ … ]]`. |
-| GNU coreutils (`find`, `stat`, `sha1sum`, `mktemp`, `touch`, etc.) | File discovery and bookkeeping. |
+| GNU coreutils (`find`, `stat`, `sha1sum`, `sha256sum`, `mktemp`, `touch`, etc.) | File discovery and bookkeeping. |
 | `pv` | Streams large files with progress bars when compressing “big” inputs. |
 | `xz` | Default compressor for “small” files and for `pixz`/`xz` outputs. |
 | `pixz` | Default compressor for “big” files; enables parallel xz for large archives. |
 | GNU `parallel` | Runs many small compression jobs concurrently. |
 
 These tools must be on `$PATH`; the script will exit early when a required tool
-is missing.
+is missing. On Debian/Ubuntu systems you can install the full toolset with:
+
+```
+sudo apt install bash coreutils pv xz-utils pixz parallel
+```
 
 ## Optional tools
 
@@ -41,13 +45,14 @@ Run `./compress.sh --help` for the exhaustive flag list. Key options:
   --jobs 12 \
   --small xz \
   --big pixz \
-  --sha1 checksums.txt
+  --sha256 checksums.txt
 ```
 
 - Files smaller than `--threshold` are compressed in parallel (`--jobs` workers).
 - Files at or above the threshold are streamed sequentially with progress bars.
-- When `--sha1 FILE` is provided the SHA1 of each original file is captured
-  before removal; add `--sha1-append` to keep existing checksums.
+- When `--sha1 FILE` or `--sha256 FILE` is provided the corresponding digest of
+  each original file is captured before removal; add the matching `--*-append`
+  flag to keep existing checksums.
 
 See `compress.sh` for all advanced tweaks (compression levels, quiet mode, etc.).
 
