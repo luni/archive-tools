@@ -2,10 +2,18 @@
 set -euo pipefail
 
 tmp_manifest=""
+tmp_tar_entries=""
+tmp_tar_command=""
 
 cleanup() {
   if [[ -n "$tmp_manifest" && -f "$tmp_manifest" ]]; then
     rm -f "$tmp_manifest"
+  fi
+  if [[ -n "$tmp_tar_entries" && -f "$tmp_tar_entries" ]]; then
+    rm -f "$tmp_tar_entries"
+  fi
+  if [[ -n "$tmp_tar_command" && -f "$tmp_tar_command" ]]; then
+    rm -f "$tmp_tar_command"
   fi
 }
 
@@ -287,6 +295,8 @@ fi
 
 mkdir -p -- "$(dirname -- "$OUTPUT_FILE")"
 tmp_manifest="$(mktemp)"
+TMP_MANIFEST="$tmp_manifest"
+export TMP_MANIFEST
 trap cleanup EXIT
 
 log "Writing SHA-256 manifest to $OUTPUT_FILE"
@@ -295,56 +305,57 @@ files_processed=0
 # Optimization for tar files - process all entries in a single decompression pass
 if [[ "$ARCHIVE_TYPE" == "tar" ]]; then
   log "Using optimized tar processing"
-  entries=()
+  tmp_tar_entries="$(mktemp)"
   while IFS= read -r -d '' entry; do
-    entries+=("$entry")
+    printf '%s\0' "$entry" >>"$tmp_tar_entries"
     files_processed=$((files_processed + 1))
   done < <(list_archive_files "$ARCHIVE")
 
-  if [[ ${#entries[@]} -gt 0 ]]; then
-    log "Processing ${#entries[@]} files in a single pass"
+  if [[ "$files_processed" -gt 0 ]]; then
+    tmp_tar_command="$(mktemp)"
+    cat >"$tmp_tar_command" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+f="${TAR_FILENAME:-}"
+if [[ -z "$f" || "$f" == */ ]]; then
+  exit 0
+fi
+printf 'processing: %s\n' "$f" >&2
+hash="$(sha256sum | awk '{print $1}')"
+if [[ -n "${TMP_MANIFEST:-}" ]]; then
+  printf '%s\t%s\n' "$hash" "$f" | tee -a "$TMP_MANIFEST"
+else
+  printf '%s\t%s\n' "$hash" "$f"
+fi
+EOF
+    chmod +x "$tmp_tar_command"
 
-    # Process all files in a single decompression pass
+    log "Processing $files_processed file(s) in a single pass"
     case "$TAR_COMPRESSION" in
       gz)
-        pigz -dc -- "$ARCHIVE" | tar -xO --to-command='
-          f="${TAR_FILENAME}"
-          echo "processing: $f" >&2
-          hash=$(sha256sum | cut -d" " -f1)
-          echo "$hash	$f"
-        ' -- "${entries[@]}" >> "$tmp_manifest"
+        if ! pigz -dc -- "$ARCHIVE" | tar --null --files-from="$tmp_tar_entries" --to-command="$tmp_tar_command" -xf -; then
+          die "Failed to process tar entries"
+        fi
         ;;
       bz2)
-        pbzip2 -dc -- "$ARCHIVE" | tar -xO --to-command='
-          f="${TAR_FILENAME}"
-          echo "processing: $f" >&2
-          hash=$(sha256sum | cut -d" " -f1)
-          echo "$hash	$f"
-        ' -- "${entries[@]}" >> "$tmp_manifest"
+        if ! pbzip2 -dc -- "$ARCHIVE" | tar --null --files-from="$tmp_tar_entries" --to-command="$tmp_tar_command" -xf -; then
+          die "Failed to process tar entries"
+        fi
         ;;
       xz)
-        pixz -d -c -- "$ARCHIVE" | tar -xO --to-command='
-          f="${TAR_FILENAME}"
-          echo "processing: $f" >&2
-          hash=$(sha256sum | cut -d" " -f1)
-          echo "$hash	$f"
-        ' -- "${entries[@]}" >> "$tmp_manifest"
+        if ! pixz -d -c -- "$ARCHIVE" | tar --null --files-from="$tmp_tar_entries" --to-command="$tmp_tar_command" -xf -; then
+          die "Failed to process tar entries"
+        fi
         ;;
       zst)
-        pzstd -d -q -c -- "$ARCHIVE" | tar -xO --to-command='
-          f="${TAR_FILENAME}"
-          echo "processing: $f" >&2
-          hash=$(sha256sum | cut -d" " -f1)
-          echo "$hash	$f"
-        ' -- "${entries[@]}" >> "$tmp_manifest"
+        if ! pzstd -d -q -c -- "$ARCHIVE" | tar --null --files-from="$tmp_tar_entries" --to-command="$tmp_tar_command" -xf -; then
+          die "Failed to process tar entries"
+        fi
         ;;
       none)
-        tar -xO --to-command='
-          f="${TAR_FILENAME}"
-          echo "processing: $f" >&2
-          hash=$(sha256sum | cut -d" " -f1)
-          echo "$hash	$f"
-        ' -- "${entries[@]}" "$ARCHIVE" >> "$tmp_manifest"
+        if ! tar --null --files-from="$tmp_tar_entries" --to-command="$tmp_tar_command" -xf "$ARCHIVE"; then
+          die "Failed to process tar entries"
+        fi
         ;;
     esac
   fi
