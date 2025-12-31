@@ -78,7 +78,7 @@ list_archive_files_7z() {
     elif [[ "$line" == Attributes\ =\ * ]]; then
       attrs="${line#Attributes = }"
     fi
-  done < <(7z l -slt -- "$archive")
+  done < <("$SEVENZ_BIN" l -slt -- "$archive")
 
   if [[ -n "$path" && "$attrs" != *D* ]]; then
     printf '%s\0' "$path"
@@ -118,7 +118,7 @@ stream_entry() {
   local archive="$1" entry="$2"
   case "$ARCHIVE_TYPE" in
     7z)
-      7z x -so -- "$archive" "$entry"
+      "$SEVENZ_BIN" x -so -- "$archive" "$entry"
       ;;
     tar)
       tar -xOf -- "$archive" "$entry"
@@ -141,6 +141,19 @@ ARCHIVE=""
 OUTPUT_FILE=""
 QUIET=0
 ARCHIVE_TYPE="7z"
+SEVENZ_BIN="7z"
+
+select_7z_tool() {
+  if command -v 7z >/dev/null 2>&1; then
+    SEVENZ_BIN="7z"
+    return 0
+  elif command -v 7zr >/dev/null 2>&1; then
+    SEVENZ_BIN="7zr"
+    return 0
+  else
+    die "Neither '7z' nor '7zr' is available on PATH."
+  fi
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -197,7 +210,7 @@ case "$ARCHIVE_TYPE" in
     require_tool tar
     ;;
   7z)
-    require_tool 7z
+    select_7z_tool
     ;;
   *)
     die "Archive type '$ARCHIVE_TYPE' is not supported."
