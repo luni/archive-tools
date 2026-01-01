@@ -9,10 +9,7 @@ REMOVE_SOURCE=0
 SHA256_FILE=""
 SHA256_ENABLED=0
 SHA256_APPEND=0
-ZEEKSTD_BIN_FROM_FLAG=0
-ZEEKSTD_BIN="${ZEEKSTD_BIN:-${HOME}/.cargo/bin/zeekstd}"
-declare -a ZEEKSTD_ARGS
-ZEEKSTD_ARGS=(--force --compression-level 10)
+PZSTD_LEVEL="-10"
 
 usage() {
   cat <<'EOF'
@@ -21,13 +18,12 @@ Usage:
 
 Description:
   Streams DIRECTORY into tar (numeric owners) and compresses the tar stream
-  with the zeekstd CLI to produce a seekable .tar.zst archive.
+  with the pzstd CLI to produce a seekable .tar.zst archive.
 
 Options:
   -o, --output FILE   Destination tar.zst path (default: DIRECTORY basename + .tar.zst)
-      --zeekstd PATH  Override zeekstd binary (default: ${HOME}/.cargo/bin/zeekstd)
-      --zeekstd-arg ARG
-                      Extra argument passed to zeekstd (repeatable)
+      --pzstd-level -#
+                      Override pzstd compression level (default: -10)
       --sha256        Emit SHA-256 manifest (default: DIRECTORY basename + .sha256)
       --sha256-file FILE
                       Emit SHA-256 manifest to FILE
@@ -61,16 +57,6 @@ default_sha256_path() {
   printf '%s.sha256\n' "$base"
 }
 
-prepare_sha256_file() {
-  local file="$1" append_flag="$2"
-  mkdir -p -- "$(dirname -- "$file")" 2>/dev/null || true
-  if [[ "$append_flag" -eq 1 ]]; then
-    : >>"$file"
-  else
-    : >"$file"
-  fi
-}
-
 write_sha256_manifest() {
   local root="$1" dest="$2" file rel hash
   [[ -z "$dest" ]] && return 0
@@ -91,15 +77,9 @@ while [[ $# -gt 0 ]]; do
       OUTPUT="$2"
       shift 2
       ;;
-    --zeekstd)
+    --pzstd-level)
       [[ $# -lt 2 ]] && die "Missing value for $1"
-      ZEEKSTD_BIN="$2"
-      ZEEKSTD_BIN_FROM_FLAG=1
-      shift 2
-      ;;
-    --zeekstd-arg)
-      [[ $# -lt 2 ]] && die "Missing value for $1"
-      ZEEKSTD_ARGS+=("$2")
+      PZSTD_LEVEL="$2"
       shift 2
       ;;
     --sha256)
@@ -170,16 +150,9 @@ require_cmd() {
 }
 
 require_cmd tar
+require_cmd pzstd
 if [[ "$SHA256_ENABLED" -eq 1 ]]; then
   require_cmd sha256sum
-fi
-
-if [[ ! -x "$ZEEKSTD_BIN" ]]; then
-  if [[ "$ZEEKSTD_BIN_FROM_FLAG" -eq 0 ]] && command -v zeekstd >/dev/null 2>&1; then
-    ZEEKSTD_BIN="$(command --skip-alias -v zeekstd 2>/dev/null || command -v zeekstd)"
-  else
-    die "zeekstd binary not found at ${HOME}/.cargo/bin/zeekstd (run ./install-zeekstd.sh)."
-  fi
 fi
 
 mkdir -p -- "$(dirname -- "$OUTPUT")"
@@ -189,7 +162,7 @@ if [[ "$SHA256_ENABLED" -eq 1 && -z "$SHA256_FILE" ]]; then
 fi
 
 if [[ "$SHA256_ENABLED" -eq 1 ]]; then
-  prepare_sha256_file "$SHA256_FILE" "$SHA256_APPEND"
+  prepare_file_for_write "$SHA256_FILE" "$SHA256_APPEND"
 fi
 
 log "Creating tar.zst at $OUTPUT from $SOURCE_DIR ..."
@@ -200,7 +173,7 @@ log "Creating tar.zst at $OUTPUT from $SOURCE_DIR ..."
   else
     tar --numeric-owner -cf - .
   fi
-) | "$ZEEKSTD_BIN" "${ZEEKSTD_ARGS[@]}" -o "$OUTPUT"
+) | pzstd "$PZSTD_LEVEL" -q -o "$OUTPUT"
 
 if [[ "$SHA256_ENABLED" -eq 1 ]]; then
   write_sha256_manifest "$SOURCE_DIR" "$SHA256_FILE"

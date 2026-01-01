@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=common.sh
+source "${SCRIPT_DIR}/common.sh"
+
 # Defaults
 SCAN_DIR="."
 SHA1_FILE=""
@@ -67,17 +71,6 @@ parse_size() {
 log() {
   if [[ "$LOG" == "1" ]]; then
     printf '%s\n' "$*" >&2
-  fi
-}
-
-prepare_checksum_file() {
-  local file="$1" append_flag="$2"
-  [[ -z "$file" ]] && return 0
-  mkdir -p -- "$(dirname -- "$file")" 2>/dev/null || true
-  if [[ "$append_flag" -eq 1 ]]; then
-    : >>"$file"
-  else
-    : >"$file"
   fi
 }
 
@@ -153,8 +146,8 @@ if [[ -n "$SHA256_FILE" && "$SHA256_APPEND" -eq 1 && -e "$SHA256_FILE" && ! -s "
   log "Detected empty SHA-256 manifest; overwriting $SHA256_FILE"
   SHA256_APPEND=0
 fi
-prepare_checksum_file "$SHA1_FILE" "$SHA1_APPEND"
-prepare_checksum_file "$SHA256_FILE" "$SHA256_APPEND"
+prepare_file_for_write "$SHA1_FILE" "$SHA1_APPEND"
+prepare_file_for_write "$SHA256_FILE" "$SHA256_APPEND"
 
 fsize() {
   stat -c '%s' -- "$1" 2>/dev/null || stat -f '%z' -- "$1"

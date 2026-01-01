@@ -12,12 +12,11 @@ the same digest appears in multiple archives, can skip intra-manifest duplicates
 if you only care about cross-archive collisions, and can list archives whose
 entire manifest contents are identical to another.
 `convert-to-tarzst.sh` rebuilds a `.7z` archive as a seekable `.tar.zst`
-payload using the [`zeekstd`](https://github.com/rorosen/zeekstd) CLI and can
-also re-compress `.tar.gz/.tgz`, `.tar.xz/.txz`, and `.tar.bz2/.tbz*` archives
-into `.tar.zst` streams without touching disk (install zeekstd via
-`./install-zeekstd.sh`).
+payload using [`pzstd`](https://github.com/facebook/zstd/tree/dev/contrib/pzstd)
+and can also re-compress `.tar.gz/.tgz`, `.tar.xz/.txz`, and `.tar.bz2/.tbz*`
+archives into `.tar.zst` streams without touching disk.
 `create-tarzst.sh` tars any directory (numeric owners) and compresses it with
-`zeekstd` into a seekable `.tar.zst`.
+`pzstd` into a seekable `.tar.zst`.
 
 ## Test chain
 
@@ -38,6 +37,7 @@ current status of that workflow on the `main` branch.
 | `7z` **or** `7zr` | Required for `analyze-archive.sh` when inspecting `.7z` archives. |
 | `unzip` | Required for `analyze-archive.sh` when inspecting `.zip` archives. |
 | GNU `parallel` | Runs many small compression jobs concurrently. |
+| `pzstd` | Required to emit seekable `.tar.zst` outputs (`convert-to-tarzst.sh`, `create-tarzst.sh`). Provided by the `zstd` package. |
 
 These tools must be on `$PATH`; the script will exit early when a required tool
 is missing. On Debian/Ubuntu systems you can install the full toolset with:
@@ -138,11 +138,7 @@ remove redundant archives quickly.
 
 ## Convert `.7z`/`.zip`/`.tar.*` to seekable `.tar.zst`
 
-1. Install the `zeekstd` CLI once (if you haven’t already):
-   ```
-   ./install-zeekstd.sh
-   ```
-2. Convert `.7z` **or** `.zip` archives (extracted to a temp dir with `7z` or
+1. Convert `.7z` **or** `.zip` archives (extracted to a temp dir with `7z` or
    `unzip`) or `.tar.{gz,xz,bz2}` inputs (streamed via pipes) to seekable
    `.tar.zst`:
    ```
@@ -152,11 +148,11 @@ remove redundant archives quickly.
    ```
 
 The script extracts `.7z` sources with `7z` and `.zip` sources with `unzip` into
-a temporary directory, streams the contents through `tar`, and invokes
-`${HOME}/.cargo/bin/zeekstd --force` to produce `backups.tar.zst` alongside the
-original. `.tar.gz/.xz/.bz2` inputs skip the extraction step entirely; they are
-decompressed via `pigz/gzip`, `pixz/xz`, or `pbzip2/bzip2` pipelines directly
-into zeekstd so no temporary workspace is needed.
+temporary directories, streams the contents through `tar`, and pipes them into
+`pzstd` to produce `backups.tar.zst` alongside the original. `.tar.gz/.xz/.bz2`
+inputs skip the extraction step entirely; they are decompressed via
+`pigz/gzip`, `pixz/xz`, or `pbzip2/bzip2` pipelines directly into `pzstd` so no
+temporary workspace is needed.
 
 Key flags:
 
@@ -164,7 +160,7 @@ Key flags:
 - `--temp-dir DIR` / `--keep-temp` – control where extracted files live and
   whether to preserve the workspace (useful when debugging ZIP/7z contents).
 - `--remove-source` – delete the original archive after a successful conversion.
-- `--zeekstd-arg ARG`, `--zeekstd PATH` – tweak or replace the encoder command.
+- `--pzstd-level -#` – tweak the compression level passed to `pzstd`.
 - `--sha256` / `--sha256-file FILE` / `--sha256-append` – emit manifests for the
   reconstructed payload (works for `.7z`, `.zip`, and streamed tarballs).
 - `--force` / `--quiet` – overwrite existing outputs or reduce logging noise.
@@ -180,10 +176,9 @@ Run:
 ```
 
 This streams the given directory through `tar --numeric-owner` and compresses it
-with `zeekstd --force --compression-level 10`, yielding
-`directory.tar.zst`. Supply `-o FILE` to customize the destination, add
-`--zeekstd-arg ARG` repeatedly to tweak encoder behavior, or pass `--quiet` /
-`--force` for less logging and overwriting existing outputs.
+with `pzstd --quiet --level -10`, yielding `directory.tar.zst`. Supply `-o FILE`
+to customize the destination, use `--pzstd-level -#` to tweak compression, or
+pass `--quiet` / `--force` for less logging and overwriting existing outputs.
 
 ## Decompression
 

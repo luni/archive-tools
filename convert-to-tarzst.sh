@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=common.sh
+source "${SCRIPT_DIR}/common.sh"
+
 ARCHIVE=""
 OUTPUT=""
 QUIET=0
@@ -11,13 +15,10 @@ TEMP_PARENT=""
 SHA256_FILE=""
 SHA256_ENABLED=0
 SHA256_APPEND=0
-ZEEKSTD_BIN_FROM_FLAG=0
-ZEEKSTD_BIN="${ZEEKSTD_BIN:-${HOME}/.cargo/bin/zeekstd}"
 ARCHIVE_TYPE=""
 INPUT_STREAM_DESC=""
-declare -a ZEEKSTD_ARGS
+PZSTD_LEVEL="-10"
 declare -a INPUT_STREAM_CMD=()
-ZEEKSTD_ARGS=(--force --compression-level 10)
 
 usage() {
   cat <<'EOF'
@@ -27,18 +28,17 @@ Usage:
 Description:
   - For *.7z inputs: extracts the archive into a temporary directory, repacks
     its contents into an uncompressed tar stream, and compresses that stream
-    with zeekstd to produce a seekable .tar.zst file.
+    with pzstd to produce a seekable .tar.zst file.
   - For *.tar.gz/*.tgz, *.tar.xz/*.txz, or *.tar.bz2/*.tbz* inputs: streams the
-    tarball through the appropriate decompressor directly into zeekstd without
+    tarball through the appropriate decompressor directly into pzstd without
     creating a temporary workspace.
   - For *.zip inputs: extracts the archive into a temporary directory, repacks
     its contents into an uncompressed tar stream, and compresses that stream
-    with zeekstd to produce a seekable .tar.zst file.
+    with pzstd to produce a seekable .tar.zst file.
 
 Options:
   -o, --output FILE       Target .tar.zst path (default: ARCHIVE basename + .tar.zst)
-      --zeekstd PATH      Override zeekstd binary (default: ${HOME}/.cargo/bin/zeekstd)
-      --zeekstd-arg ARG   Additional argument to pass to zeekstd (repeatable)
+      --pzstd-level -#    Override pzstd compression level (default: -10)
       --temp-dir DIR      Create the temporary extraction directory under DIR
                            (only applies to .7z inputs)
       --sha256            Emit SHA-256 manifest (defaults to ARCHIVE basename + .sha256)
@@ -56,11 +56,6 @@ EOF
 log() {
   [[ "$QUIET" -eq 1 ]] && return 0
   printf '%s\n' "$*" >&2
-}
-
-die() {
-  printf 'Error: %s\n' "$1" >&2
-  exit 2
 }
 
 default_basename_path() {
@@ -86,32 +81,6 @@ default_basename_path() {
 default_sha256_path() {
   local archive="$1"
   printf '%s.sha256\n' "$(default_basename_path "$archive")"
-}
-
-prepare_sha256_file() {
-  local file="$1" append_flag="$2"
-  [[ -z "$file" ]] && return 0
-  mkdir -p -- "$(dirname -- "$file")" 2>/dev/null || true
-  if [[ "$append_flag" -eq 1 ]]; then
-    : >>"$file"
-  else
-    : >"$file"
-  fi
-}
-
-write_sha256_manifest() {
-  local root="$1" dest="$2" file rel hash
-  [[ -z "$dest" ]] && return 0
-
-  # Sort paths for deterministic output
-  while IFS= read -r -d '' file; do
-    rel="${file#$root/}"
-    if [[ "$rel" == "$file" ]]; then
-      rel="$(basename -- "$file")"
-    fi
-    hash="$(sha256sum -- "$file" | awk '{print $1}')"
-    printf '%s  %s\n' "$hash" "$rel" >>"$dest"
-  done < <(LC_ALL=C find "$root" -type f -print0 | LC_ALL=C sort -z)
 }
 
 detect_tar_compression() {
@@ -213,10 +182,6 @@ EOF
   rm -f "$tmp_files" "$tmp_command" "$tmp_manifest"
 }
 
-require_cmd() {
-  command -v "$1" >/dev/null 2>&1 || die "Required tool '$1' is not on PATH."
-}
-
 detect_archive_type() {
   local archive="$1"
   local lowered="${archive,,}"
@@ -286,15 +251,9 @@ while [[ $# -gt 0 ]]; do
       OUTPUT="$2"
       shift 2
       ;;
-    --zeekstd)
+    --pzstd-level)
       [[ $# -lt 2 ]] && die "Missing value for $1"
-      ZEEKSTD_BIN="$2"
-      ZEEKSTD_BIN_FROM_FLAG=1
-      shift 2
-      ;;
-    --zeekstd-arg)
-      [[ $# -lt 2 ]] && die "Missing value for $1"
-      ZEEKSTD_ARGS+=("$2")
+      PZSTD_LEVEL="$2"
       shift 2
       ;;
     --temp-dir)
@@ -385,25 +344,15 @@ else
   setup_stream_input
 fi
 
+require_cmd pzstd
+
 if [[ "$SHA256_ENABLED" -eq 1 ]]; then
   require_cmd sha256sum
-  prepare_sha256_file "$SHA256_FILE" "$SHA256_APPEND"
+  prepare_file_for_write "$SHA256_FILE" "$SHA256_APPEND"
 fi
 
 if [[ -n "$TEMP_PARENT" ]]; then
   mkdir -p -- "$TEMP_PARENT" || die "Failed to create temp directory parent: $TEMP_PARENT"
-fi
-
-if [[ ! -x "$ZEEKSTD_BIN" ]]; then
-  if [[ "$ZEEKSTD_BIN_FROM_FLAG" -eq 0 ]]; then
-    if command -v zeekstd >/dev/null 2>&1; then
-      ZEEKSTD_BIN="$(command -v zeekstd)"
-    else
-      die "zeekstd binary not found at ${HOME}/.cargo/bin/zeekstd (run ./install-zeekstd.sh)."
-    fi
-  else
-    die "zeekstd binary is not executable: $ZEEKSTD_BIN"
-  fi
 fi
 
 if [[ "$ARCHIVE_TYPE" == "7z" ]]; then
@@ -457,13 +406,13 @@ fi
 
 log "Creating tar.zst at $OUTPUT ..."
 if [[ "$ARCHIVE_TYPE" == "7z" || "$ARCHIVE_TYPE" == "zip" ]]; then
-  if ! tar_stream | "$ZEEKSTD_BIN" "${ZEEKSTD_ARGS[@]}" -o "$TMP_OUTPUT"; then
-    die "zeekstd compression failed"
+  if ! tar_stream | pzstd "$PZSTD_LEVEL" -q -o "$TMP_OUTPUT"; then
+    die "pzstd compression failed"
   fi
 else
   log "Streaming $ARCHIVE via $INPUT_STREAM_DESC ..."
-  if ! "${INPUT_STREAM_CMD[@]}" | "$ZEEKSTD_BIN" "${ZEEKSTD_ARGS[@]}" -o "$TMP_OUTPUT"; then
-    die "zeekstd compression failed"
+  if ! "${INPUT_STREAM_CMD[@]}" | pzstd "$PZSTD_LEVEL" -q -o "$TMP_OUTPUT"; then
+    die "pzstd compression failed"
   fi
 fi
 

@@ -17,6 +17,7 @@ require_cmd zstd
 require_cmd zip
 require_cmd unzip
 require_cmd sha256sum
+require_cmd pzstd
 
 run_convert_to_tarzst_suite() {
   log "Verifying convert-to-tarzst.sh handles 7z with SHA256 manifests"
@@ -54,13 +55,11 @@ run_convert_to_tarzst_suite() {
     7z a -bd -y "$archive" "${rel_paths[@]}" >/dev/null
   )
 
-  ensure_zeekstd
-
   local output_tar_zst="$tmpdir/output.tar.zst"
   local manifest="$tmpdir/output.sha256"
 
   local script="$REPO_ROOT/convert-to-tarzst.sh"
-  if ! ZEEKSTD_BIN="$ZEEKSTD_BIN_PATH" "$script" \
+  if ! "$script" \
       --output "$output_tar_zst" \
       --sha256-file "$manifest" \
       --remove-source \
@@ -147,7 +146,7 @@ run_convert_to_tarzst_suite() {
     local converted="${tarball%.tar.*}.tar.zst"
     local tar_manifest="${tarball%.tar.*}.sha256"
 
-    if ! ZEEKSTD_BIN="$ZEEKSTD_BIN_PATH" "$script" \
+    if ! "$script" \
         --sha256-file "$tar_manifest" \
         "$tarball" >/dev/null; then
       echo "convert-to-tarzst.sh failed on $tarball" >&2
@@ -217,7 +216,7 @@ run_convert_to_tarzst_suite() {
     local zip_converted="$tmpdir/test-${compression}.tar.zst"
     local zip_manifest="$tmpdir/test-${compression}.sha256"
 
-    if ! ZEEKSTD_BIN="$ZEEKSTD_BIN_PATH" "$script" \
+    if ! "$script" \
         --output "$zip_converted" \
         --sha256-file "$zip_manifest" \
         "$zip_archive" >/dev/null; then

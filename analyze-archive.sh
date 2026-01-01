@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=common.sh
+source "${SCRIPT_DIR}/common.sh"
+
 tmp_manifest=""
 tmp_tar_entries=""
 tmp_tar_command=""
@@ -35,11 +39,6 @@ Options:
 EOF
 }
 
-die() {
-  printf 'Error: %s\n' "$1" >&2
-  exit 2
-}
-
 log() {
   [[ "$QUIET" -eq 1 ]] && return 0
   printf '%s\n' "$*" >&2
@@ -53,10 +52,6 @@ default_output_path() {
     base="${base%.*}"
   fi
   printf '%s/%s.sha256\n' "$dir" "$base"
-}
-
-require_tool() {
-  command -v "$1" >/dev/null 2>&1 || die "Required tool '$1' is not on PATH."
 }
 
 detect_archive_type() {
@@ -135,10 +130,10 @@ detect_tar_compression() {
 
 require_tar_filter_tool() {
   case "$TAR_COMPRESSION" in
-    gz) require_tool pigz ;;
-    bz2) require_tool pbzip2 ;;
-    xz) require_tool pixz ;;
-    zst) require_tool pzstd ;;
+    gz) require_cmd pigz ;;
+    bz2) require_cmd pbzip2 ;;
+    xz) require_cmd pixz ;;
+    zst) require_cmd pzstd ;;
   esac
 }
 
@@ -310,10 +305,10 @@ fi
 
 case "$ARCHIVE_TYPE" in
   zip)
-    require_tool unzip
+    require_cmd unzip
     ;;
   tar)
-    require_tool tar
+    require_cmd tar
     TAR_COMPRESSION="$(detect_tar_compression "$ARCHIVE")"
     require_tar_filter_tool
     ;;
@@ -324,7 +319,7 @@ case "$ARCHIVE_TYPE" in
     die "Archive type '$ARCHIVE_TYPE' is not supported."
     ;;
 esac
-require_tool sha256sum
+require_cmd sha256sum
 
 if [[ -z "$OUTPUT_FILE" ]]; then
   OUTPUT_FILE="$(default_output_path "$ARCHIVE")"

@@ -14,8 +14,6 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    env:
-      ZEEKSTD_TAG: v0.4.3-cli
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -26,22 +24,6 @@ jobs:
           DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends \
             xz-utils pixz zstd parallel pv python3 pbzip2 pigz
           sudo rm -rf /var/lib/apt/lists/*
-
-      - name: Cache zeekstd build artifacts
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/zeekstd
-            ~/.cargo/zeekstd.tag
-            ~/.cargo/.crates.toml
-            ~/.cargo/.crates2.json
-            ~/.cargo/registry
-            ~/.cargo/git
-            ~/.rustup
-          key: zeekstd-${{ runner.os }}-${{ env.ZEEKSTD_TAG }}
-
-      - name: Install zeekstd CLI
-        run: ./install-zeekstd.sh
 
       - name: Run tests
         run: tests/run.sh

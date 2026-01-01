@@ -107,18 +107,3 @@ verify_checksum_file() {
     fi
   done
 }
-
-ensure_zeekstd() {
-  if command -v zeekstd >/dev/null 2>&1; then
-    ZEEKSTD_BIN_PATH="$(command -v zeekstd)"
-    return 0
-  fi
-
-  if [[ -x "${HOME}/.cargo/bin/zeekstd" ]]; then
-    ZEEKSTD_BIN_PATH="${HOME}/.cargo/bin/zeekstd"
-    return 0
-  fi
-
-  echo "Missing zeekstd binary. Please run ./install-zeekstd.sh first." >&2
-  exit 1
-}
