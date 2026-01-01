@@ -85,6 +85,9 @@ require_cmd zstd
 require_cmd sha1sum
 require_cmd sha256sum
 require_cmd tar
+require_cmd 7z
+require_cmd zip
+require_cmd unzip
 
 verify_checksum_file() {
   local file="$1"; shift
@@ -312,15 +315,17 @@ run_decompress_test() {
   run_single_decompress_test true "remove-compressed"
 }
 
-run_analyze_archive_test() {
-  log "Running analyze-archive.sh test"
+run_analyze_archive_case() {
+  local archive_type="$1"
+  log "Running analyze-archive.sh test (${archive_type})"
 
   local tmpdir
   tmpdir="$(mktemp -d)"
   TMP_DIRS+=("$tmpdir")
 
   local input_dir="$tmpdir/input"
-  local archive="$tmpdir/sample.tar"
+  local archive
+  local expected_log=""
   mkdir -p "$input_dir"
 
   local rel_paths=(
@@ -339,33 +344,59 @@ run_analyze_archive_test() {
     local rel="${rel_paths[$idx]}"
     local abs="$input_dir/$rel"
     mkdir -p -- "$(dirname -- "$abs")"
-    generate_test_file "$abs" "${sizes[$idx]}" "Analyze archive payload $idx"
+    generate_test_file "$abs" "${sizes[$idx]}" "Analyze archive payload $idx (${archive_type})"
     expected_hashes["$rel"]="$(sha256sum -- "$abs" | awk '{print $1}')"
   done
 
-  tar -C "$input_dir" -cf "$archive" "${rel_paths[@]}"
+  case "$archive_type" in
+    tar)
+      archive="$tmpdir/sample.tar"
+      tar -C "$input_dir" -cf "$archive" "${rel_paths[@]}"
+      expected_log="Using optimized tar processing"
+      ;;
+    7z)
+      archive="$tmpdir/sample.7z"
+      (
+        cd "$input_dir"
+        7z a -bd -y "$archive" "${rel_paths[@]}" >/dev/null
+      )
+      expected_log="Using optimized 7z processing"
+      ;;
+    zip)
+      archive="$tmpdir/sample.zip"
+      (
+        cd "$input_dir"
+        zip -q "$archive" "${rel_paths[@]}"
+      )
+      expected_log=""
+      ;;
+    *)
+      echo "Unknown archive type for analyze-archive test: $archive_type" >&2
+      return 1
+      ;;
+  esac
 
   local output
   if ! output="$("$REPO_ROOT/analyze-archive.sh" "$archive" 2>&1)"; then
-    echo "analyze-archive.sh failed during manifest generation" >&2
+    echo "analyze-archive.sh failed during manifest generation (${archive_type})" >&2
     echo "$output" >&2
     return 1
   fi
 
   local manifest="$tmpdir/sample.sha256"
   if [[ ! -f "$manifest" ]]; then
-    echo "Manifest not created at expected path: $manifest" >&2
+    echo "Manifest not created at expected path (${archive_type}): $manifest" >&2
     return 1
   fi
 
-  if [[ "$output" != *"Using optimized tar processing"* ]]; then
-    echo "analyze-archive.sh did not use optimized tar processing path" >&2
+  if [[ -n "$expected_log" && "$output" != *"$expected_log"* ]]; then
+    echo "analyze-archive.sh did not use optimized ${archive_type} processing path" >&2
     echo "$output" >&2
     return 1
   fi
 
   if [[ "$output" != *"Processed ${#rel_paths[@]} file(s)."* ]]; then
-    echo "analyze-archive.sh reported unexpected processed count" >&2
+    echo "analyze-archive.sh reported unexpected processed count (${archive_type})" >&2
     echo "$output" >&2
     return 1
   fi
@@ -379,18 +410,18 @@ run_analyze_archive_test() {
     local normalized="${path#./}"
 
     if [[ -n "$previous_path" && "$path" < "$previous_path" ]]; then
-      echo "Manifest entries are not sorted lexicographically" >&2
+      echo "Manifest entries are not sorted lexicographically (${archive_type})" >&2
       return 1
     fi
     previous_path="$path"
 
     if [[ -z "${expected_hashes[$normalized]:-}" ]]; then
-      echo "Unexpected entry found in manifest: $path" >&2
+      echo "Unexpected entry found in manifest (${archive_type}): $path" >&2
       return 1
     fi
 
     if [[ "${expected_hashes[$normalized]}" != "$hash" ]]; then
-      echo "Hash mismatch for $path" >&2
+      echo "Hash mismatch for $path (${archive_type})" >&2
       echo " expected: ${expected_hashes[$normalized]}" >&2
       echo " actual  : $hash" >&2
       return 1
@@ -401,7 +432,7 @@ run_analyze_archive_test() {
 
   for rel in "${!expected_hashes[@]}"; do
     if [[ -z "${seen_paths[$rel]:-}" ]]; then
-      echo "Missing manifest entry for $rel" >&2
+      echo "Missing manifest entry for $rel (${archive_type})" >&2
       return 1
     fi
   done
@@ -412,31 +443,38 @@ run_analyze_archive_test() {
   printf 'out-of-date manifest\n' >"$manifest"
   local skip_output
   if ! skip_output="$("$REPO_ROOT/analyze-archive.sh" "$archive" 2>&1)"; then
-    echo "analyze-archive.sh failed when manifest already existed" >&2
+    echo "analyze-archive.sh failed when manifest already existed (${archive_type})" >&2
     echo "$skip_output" >&2
     return 1
   fi
 
   if [[ "$skip_output" != *"skip (manifest exists): $manifest"* ]]; then
-    echo "analyze-archive.sh did not report skip when manifest existed" >&2
+    echo "analyze-archive.sh did not report skip when manifest existed (${archive_type})" >&2
     echo "$skip_output" >&2
     return 1
   fi
 
   if [[ "$(cat "$manifest")" != "out-of-date manifest" ]]; then
-    echo "Manifest was unexpectedly rewritten without --overwrite" >&2
+    echo "Manifest was unexpectedly rewritten without --overwrite (${archive_type})" >&2
     return 1
   fi
 
   if ! "$REPO_ROOT/analyze-archive.sh" --overwrite "$archive" >/dev/null 2>&1; then
-    echo "analyze-archive.sh failed when invoked with --overwrite" >&2
+    echo "analyze-archive.sh failed when invoked with --overwrite (${archive_type})" >&2
     return 1
   fi
 
   if ! cmp -s "$manifest" "$manifest_backup"; then
-    echo "Manifest contents did not refresh after --overwrite run" >&2
+    echo "Manifest contents did not refresh after --overwrite run (${archive_type})" >&2
     return 1
   fi
+}
+
+run_analyze_archive_test() {
+  log "Running analyze-archive.sh test"
+  run_analyze_archive_case tar
+  run_analyze_archive_case 7z
+  run_analyze_archive_case zip
 }
 
 run_find_duplicate_sha256_test() {

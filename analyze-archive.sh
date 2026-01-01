@@ -4,6 +4,9 @@ set -euo pipefail
 tmp_manifest=""
 tmp_tar_entries=""
 tmp_tar_command=""
+declare -a SEVENZ_PATHS=()
+declare -a SEVENZ_SIZES=()
+EMPTY_SHA256="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 cleanup() {
   if [[ -n "$tmp_manifest" && -f "$tmp_manifest" ]]; then
@@ -69,16 +72,68 @@ detect_archive_type() {
   esac
 }
 
-list_archive_files_7z() {
+process_7z_entries_single_pass() {
   local archive="$1"
-  local line path attrs started=0
+  collect_7z_entries_with_sizes "$archive"
+
+  local total="${#SEVENZ_PATHS[@]}"
+  if [[ "$total" -eq 0 ]]; then
+    files_processed=0
+    return 0
+  fi
+
+  log "Using optimized 7z processing"
+
+  local -a cmd=("$SEVENZ_BIN" x -so -bd -y -- "$archive")
+  cmd+=("${SEVENZ_PATHS[@]}")
+
+  coproc SEVENZ_STREAM { "${cmd[@]}"; }
+  local sevenz_pid="$SEVENZ_STREAM_PID"
+  local coproc_stdout="${SEVENZ_STREAM[0]}"
+  local coproc_stdin="${SEVENZ_STREAM[1]}"
+  eval "exec ${coproc_stdin}>&-"
+
+  local reader_fd
+  exec {reader_fd}<&${coproc_stdout}
+  local idx hash entry size
+
+  for idx in "${!SEVENZ_PATHS[@]}"; do
+    entry="${SEVENZ_PATHS[idx]}"
+    size="${SEVENZ_SIZES[idx]}"
+    log "processing: $entry"
+    if [[ "$size" -eq 0 ]]; then
+      hash="$EMPTY_SHA256"
+    else
+      hash="$(dd iflag=count_bytes count="$size" bs=1M status=none <&$reader_fd | sha256sum | awk '{print $1}')"
+    fi
+    printf '%s\t%s\n' "$hash" "$entry" | tee -a "$tmp_manifest"
+  done
+
+  exec {reader_fd}>&-
+  if ! wait "$sevenz_pid"; then
+    die "7z extraction failed"
+  fi
+
+  files_processed=$total
+}
+
+collect_7z_entries_with_sizes() {
+  local archive="$1"
+  local line path attrs size started=0
+
+  SEVENZ_PATHS=()
+  SEVENZ_SIZES=()
 
   flush_entry() {
     if [[ -n "$path" && "$attrs" != *D* ]]; then
-      printf '%s\0' "$path"
+      local sanitized_size="${size//[[:space:]]/}"
+      [[ "$sanitized_size" =~ ^[0-9]+$ ]] || die "Unable to determine size for '$path' in $archive"
+      SEVENZ_PATHS+=("$path")
+      SEVENZ_SIZES+=("$sanitized_size")
     fi
     path=""
     attrs=""
+    size=""
   }
 
   while IFS= read -r line; do
@@ -104,10 +159,20 @@ list_archive_files_7z() {
       path="${line#Path = }"
     elif [[ "$line" == Attributes\ =\ * ]]; then
       attrs="${line#Attributes = }"
+    elif [[ "$line" == Size\ =\ * ]]; then
+      size="${line#Size = }"
     fi
   done < <("$SEVENZ_BIN" l -slt -- "$archive")
 
   flush_entry
+}
+
+list_archive_files_7z() {
+  local archive="$1" entry
+  collect_7z_entries_with_sizes "$archive"
+  for entry in "${SEVENZ_PATHS[@]}"; do
+    printf '%s\0' "$entry"
+  done
 }
 
 detect_tar_compression() {
@@ -368,8 +433,10 @@ EOF
         ;;
     esac
   fi
+elif [[ "$ARCHIVE_TYPE" == "7z" ]]; then
+  process_7z_entries_single_pass "$ARCHIVE"
 else
-  # Original processing for non-tar files
+  # Fallback processing for archive types without streaming optimizations
   while IFS= read -r -d '' entry; do
     files_processed=$((files_processed + 1))
     log "processing: $entry"
