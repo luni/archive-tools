@@ -1,4 +1,4 @@
-# Archiving Compression Tools
+# Archiving Compression Tools ![CI status badge](https://github.com/luni/archive-tools/actions/workflows/tests.yml/badge.svg)
 
 `compress.sh` scans a directory for large text-ish artifacts (tar/sql/txt/csv/ibd) and
 compresses them using sensible defaults. Smaller files are processed in
@@ -18,6 +18,13 @@ into `.tar.zst` streams without touching disk (install zeekstd via
 `./install-zeekstd.sh`).
 `create-tarzst.sh` tars any directory (numeric owners) and compresses it with
 `zeekstd` into a seekable `.tar.zst`.
+
+## Test chain
+
+Every pull request runs `tests/run.sh` via the GitHub Actions workflow in
+`.github/workflows/tests.yml`, ensuring the compression, conversion, analysis,
+and install helpers keep working end-to-end. The badge above reflects the
+current status of that workflow on the `main` branch.
 
 ## Required tools
 
@@ -129,34 +136,40 @@ exact same set of files/hashes (i.e., perfect duplicates). In that mode the
 script groups manifests with identical contents and prints each group so you can
 remove redundant archives quickly.
 
-## Convert `.7z` to seekable `.tar.zst`
+## Convert `.7z`/`.zip`/`.tar.*` to seekable `.tar.zst`
 
 1. Install the `zeekstd` CLI once (if you haven’t already):
    ```
    ./install-zeekstd.sh
    ```
-2. Convert `.7z` archives (extracted to a temp dir) or `.tar.{gz,xz,bz2}` inputs
-   (streamed via pipes) to seekable `.tar.zst`:
+2. Convert `.7z` **or** `.zip` archives (extracted to a temp dir with `7z` or
+   `unzip`) or `.tar.{gz,xz,bz2}` inputs (streamed via pipes) to seekable
+   `.tar.zst`:
    ```
    ./convert-to-tarzst.sh backups.7z
+   ./convert-to-tarzst.sh reports.zip
    ./convert-to-tarzst.sh backups.tar.gz
    ```
 
-The script extracts `.7z` sources into a temporary directory, streams the
-contents through `tar`, and invokes `${HOME}/.cargo/bin/zeekstd --force` to
-produce `backups.tar.zst` alongside the original. `.tar.gz/.xz/.bz2` inputs skip
-the extraction step entirely; they are decompressed via `pigz/gzip`, `pixz/xz`,
-or `pbzip2/bzip2` pipelines directly into zeekstd so no temporary workspace is
-needed. Override the destination with `--output FILE`, keep the temporary
-extraction directory with `--keep-temp`, add encoder toggles using repeated
-`--zeekstd-arg ARG`, or overwrite existing outputs via `--force`. Use
-`--zeekstd /path/to/zeekstd` when the default location is not suitable, and
-`--temp-dir DIR` to force the extraction workspace to live on a specific
-filesystem (useful when `/tmp` is too small). The output inherits the original
-archive’s modification time, and `--remove-source` deletes the input once
-conversion succeeds. Add `--sha256` (optionally `--sha256 FILE` and
-`--sha256-append`) to emit a `sha256sum`-compatible manifest of every file inside
-the original `.7z` archive.
+The script extracts `.7z` sources with `7z` and `.zip` sources with `unzip` into
+a temporary directory, streams the contents through `tar`, and invokes
+`${HOME}/.cargo/bin/zeekstd --force` to produce `backups.tar.zst` alongside the
+original. `.tar.gz/.xz/.bz2` inputs skip the extraction step entirely; they are
+decompressed via `pigz/gzip`, `pixz/xz`, or `pbzip2/bzip2` pipelines directly
+into zeekstd so no temporary workspace is needed.
+
+Key flags:
+
+- `--output FILE` – override the output location.
+- `--temp-dir DIR` / `--keep-temp` – control where extracted files live and
+  whether to preserve the workspace (useful when debugging ZIP/7z contents).
+- `--remove-source` – delete the original archive after a successful conversion.
+- `--zeekstd-arg ARG`, `--zeekstd PATH` – tweak or replace the encoder command.
+- `--sha256` / `--sha256-file FILE` / `--sha256-append` – emit manifests for the
+  reconstructed payload (works for `.7z`, `.zip`, and streamed tarballs).
+- `--force` / `--quiet` – overwrite existing outputs or reduce logging noise.
+
+The resulting `.tar.zst` inherits the original archive’s modification time.
 
 ## Create seekable `.tar.zst` from a directory
 
