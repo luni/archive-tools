@@ -10,10 +10,11 @@ REMOVE_SOURCE=0
 TEMP_PARENT=""
 SHA256_FILE=""
 SHA256_APPEND=0
+AUTO_SHA256_SENTINEL="__auto_sha256__"
 ZEEKSTD_BIN_FROM_FLAG=0
 ZEEKSTD_BIN="${ZEEKSTD_BIN:-${HOME}/.cargo/bin/zeekstd}"
 declare -a ZEEKSTD_ARGS
-ZEEKSTD_ARGS=(--force)
+ZEEKSTD_ARGS=(--force --level 10)
 
 usage() {
   cat <<'EOF'
@@ -30,7 +31,8 @@ Options:
       --zeekstd PATH      Override zeekstd binary (default: ${HOME}/.cargo/bin/zeekstd)
       --zeekstd-arg ARG   Additional argument to pass to zeekstd (repeatable)
       --temp-dir DIR      Create the temporary extraction directory under DIR
-      --sha256 FILE       Write/overwrite FILE with SHA-256 of every file inside the archive
+      --sha256 [FILE]     Write/overwrite FILE with SHA-256 of every file inside the archive
+                          (defaults to ARCHIVE basename + .sha256 when FILE omitted)
       --sha256-append     Append to the SHA-256 file instead of truncating
   -f, --force             Overwrite the output file if it already exists
       --remove-source     Delete the original .7z archive after a successful conversion
@@ -48,6 +50,21 @@ log() {
 die() {
   printf 'Error: %s\n' "$1" >&2
   exit 2
+}
+
+default_basename_path() {
+  local archive="$1" dir base
+  dir="$(dirname -- "$archive")"
+  base="$(basename -- "$archive")"
+  if [[ "$base" == *.* ]]; then
+    base="${base%.*}"
+  fi
+  printf '%s/%s\n' "$dir" "$base"
+}
+
+default_sha256_path() {
+  local archive="$1"
+  printf '%s.sha256\n' "$(default_basename_path "$archive")"
 }
 
 prepare_sha256_file() {
@@ -92,7 +109,7 @@ cleanup() {
     rm -f -- "$TMP_OUTPUT"
   fi
 }
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -118,9 +135,13 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --sha256)
-      [[ $# -lt 2 ]] && die "Missing value for $1"
-      SHA256_FILE="$2"
-      shift 2
+      if [[ $# -ge 2 && "$2" != -* ]]; then
+        SHA256_FILE="$2"
+        shift 2
+      else
+        SHA256_FILE="$AUTO_SHA256_SENTINEL"
+        shift
+      fi
       ;;
     --sha256-append)
       SHA256_APPEND=1
@@ -172,16 +193,15 @@ fi
 [[ -f "$ARCHIVE" ]] || die "Archive not found: $ARCHIVE"
 
 if [[ -z "$OUTPUT" ]]; then
-  dir="$(dirname -- "$ARCHIVE")"
-  base="$(basename -- "$ARCHIVE")"
-  if [[ "$base" == *.* ]]; then
-    base="${base%.*}"
-  fi
-  OUTPUT="${dir}/${base}.tar.zst"
+  OUTPUT="$(default_basename_path "$ARCHIVE").tar.zst"
 fi
 
 if [[ -e "$OUTPUT" && "$FORCE" -ne 1 ]]; then
   die "Output already exists: $OUTPUT (use --force to overwrite)"
+fi
+
+if [[ "$SHA256_FILE" == "$AUTO_SHA256_SENTINEL" ]]; then
+  SHA256_FILE="$(default_sha256_path "$ARCHIVE")"
 fi
 
 if [[ -n "$SHA256_FILE" ]]; then

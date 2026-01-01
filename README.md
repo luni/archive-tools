@@ -137,7 +137,7 @@ remove redundant archives quickly.
    ```
 
 The script extracts the source archive into a temporary directory, streams the
-contents through `tar`, and invokes `${HOME}/.cargo/bin/zeekstd --seekable` to
+contents through `tar`, and invokes `${HOME}/.cargo/bin/zeekstd --force` to
 produce `backups.tar.zst` alongside the original. Override the destination with
 `--output FILE`, keep the temporary extraction directory with `--keep-temp`, add
 extra encoder toggles using repeated `--zeekstd-arg ARG`, or overwrite existing
@@ -145,9 +145,10 @@ outputs via `--force`. Use `--zeekstd /path/to/zeekstd` when the default
 location is not suitable, and `--temp-dir DIR` to force the extraction workspace
 to live on a specific filesystem (useful when `/tmp` is too small). The output
 inherits the original archive’s modification time, and `--remove-source` deletes
-the `.7z` once conversion succeeds. Add `--sha256 FILE` (optionally with
-`--sha256-append`) to emit a `sha256sum`-compatible entry for the freshly
-generated `.tar.zst`.
+the `.7z` once conversion succeeds. Add `--sha256` (optionally `--sha256 FILE`
+and `--sha256-append`) to emit a `sha256sum`-compatible manifest of every file
+inside the original archive; when the FILE argument is omitted the manifest
+defaults to `ARCHIVE_BASENAME.sha256`.
 
 ## Decompression
 
