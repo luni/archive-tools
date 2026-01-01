@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SOURCE_DIR=""
+OUTPUT=""
+QUIET=0
+FORCE=0
+REMOVE_SOURCE=0
+SHA256_FILE=""
+SHA256_ENABLED=0
+SHA256_APPEND=0
+ZEEKSTD_BIN_FROM_FLAG=0
+ZEEKSTD_BIN="${ZEEKSTD_BIN:-${HOME}/.cargo/bin/zeekstd}"
+declare -a ZEEKSTD_ARGS
+ZEEKSTD_ARGS=(--force --compression-level 10)
+
+usage() {
+  cat <<'EOF'
+Usage:
+  create-tarzst.sh [options] DIRECTORY
+
+Description:
+  Streams DIRECTORY into tar (numeric owners) and compresses the tar stream
+  with the zeekstd CLI to produce a seekable .tar.zst archive.
+
+Options:
+  -o, --output FILE   Destination tar.zst path (default: DIRECTORY basename + .tar.zst)
+      --zeekstd PATH  Override zeekstd binary (default: ${HOME}/.cargo/bin/zeekstd)
+      --zeekstd-arg ARG
+                      Extra argument passed to zeekstd (repeatable)
+      --sha256        Emit SHA-256 manifest (default: DIRECTORY basename + .sha256)
+      --sha256-file FILE
+                      Emit SHA-256 manifest to FILE
+      --sha256-append Append to the SHA-256 file instead of truncating
+      --remove-source Delete DIRECTORY after a successful archive
+  -f, --force         Overwrite existing output file
+  -q, --quiet         Suppress progress logs
+  -h, --help          Show this help message
+EOF
+}
+
+log() {
+  [[ "$QUIET" -eq 1 ]] && return 0
+  printf '%s\n' "$*" >&2
+}
+
+die() {
+  printf 'Error: %s\n' "$1" >&2
+  exit 2
+}
+
+default_output_path() {
+  local dir="$1" base
+  base="$(basename -- "$dir")"
+  printf '%s.tar.zst\n' "$base"
+}
+
+default_sha256_path() {
+  local dir="$1" base
+  base="$(basename -- "$dir")"
+  printf '%s.sha256\n' "$base"
+}
+
+prepare_sha256_file() {
+  local file="$1" append_flag="$2"
+  mkdir -p -- "$(dirname -- "$file")" 2>/dev/null || true
+  if [[ "$append_flag" -eq 1 ]]; then
+    : >>"$file"
+  else
+    : >"$file"
+  fi
+}
+
+write_sha256_manifest() {
+  local root="$1" dest="$2" file rel hash
+  [[ -z "$dest" ]] && return 0
+  while IFS= read -r -d '' file; do
+    rel="${file#$root/}"
+    if [[ "$rel" == "$file" ]]; then
+      rel="$(basename -- "$file")"
+    fi
+    hash="$(sha256sum -- "$file" | awk '{print $1}')"
+    printf '%s  %s\n' "$hash" "$rel" >>"$dest"
+  done < <(LC_ALL=C find "$root" -type f -print0 | LC_ALL=C sort -z)
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o|--output)
+      [[ $# -lt 2 ]] && die "Missing value for $1"
+      OUTPUT="$2"
+      shift 2
+      ;;
+    --zeekstd)
+      [[ $# -lt 2 ]] && die "Missing value for $1"
+      ZEEKSTD_BIN="$2"
+      ZEEKSTD_BIN_FROM_FLAG=1
+      shift 2
+      ;;
+    --zeekstd-arg)
+      [[ $# -lt 2 ]] && die "Missing value for $1"
+      ZEEKSTD_ARGS+=("$2")
+      shift 2
+      ;;
+    --sha256)
+      SHA256_ENABLED=1
+      shift
+      ;;
+    --sha256-file)
+      [[ $# -lt 2 ]] && die "Missing value for $1"
+      SHA256_ENABLED=1
+      SHA256_FILE="$2"
+      shift 2
+      ;;
+    --sha256-append)
+      SHA256_APPEND=1
+      shift
+      ;;
+    --remove-source)
+      REMOVE_SOURCE=1
+      shift
+      ;;
+    -f|--force)
+      FORCE=1
+      shift
+      ;;
+    -q|--quiet)
+      QUIET=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      die "Unknown option: $1"
+      ;;
+    *)
+      if [[ -z "$SOURCE_DIR" ]]; then
+        SOURCE_DIR="$1"
+        shift
+      else
+        die "Only one directory can be compressed at a time."
+      fi
+      ;;
+  esac
+done
+
+if [[ $# -gt 0 ]]; then
+  die "Unexpected positional arguments: $*"
+fi
+
+[[ -n "$SOURCE_DIR" ]] || die "Directory path is required."
+[[ -d "$SOURCE_DIR" ]] || die "Directory not found: $SOURCE_DIR"
+
+if [[ -z "$OUTPUT" ]]; then
+  OUTPUT="$(default_output_path "$SOURCE_DIR")"
+fi
+
+if [[ -e "$OUTPUT" && "$FORCE" -ne 1 ]]; then
+  die "Output already exists: $OUTPUT (use --force to overwrite)"
+fi
+
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || die "Required tool '$1' is not on PATH."
+}
+
+require_cmd tar
+if [[ "$SHA256_ENABLED" -eq 1 ]]; then
+  require_cmd sha256sum
+fi
+
+if [[ ! -x "$ZEEKSTD_BIN" ]]; then
+  if [[ "$ZEEKSTD_BIN_FROM_FLAG" -eq 0 ]] && command -v zeekstd >/dev/null 2>&1; then
+    ZEEKSTD_BIN="$(command --skip-alias -v zeekstd 2>/dev/null || command -v zeekstd)"
+  else
+    die "zeekstd binary not found at ${HOME}/.cargo/bin/zeekstd (run ./install-zeekstd.sh)."
+  fi
+fi
+
+mkdir -p -- "$(dirname -- "$OUTPUT")"
+
+if [[ "$SHA256_ENABLED" -eq 1 && -z "$SHA256_FILE" ]]; then
+  SHA256_FILE="$(default_sha256_path "$SOURCE_DIR")"
+fi
+
+if [[ "$SHA256_ENABLED" -eq 1 ]]; then
+  prepare_sha256_file "$SHA256_FILE" "$SHA256_APPEND"
+fi
+
+log "Creating tar.zst at $OUTPUT from $SOURCE_DIR ..."
+(
+  cd "$SOURCE_DIR"
+  if [[ -z "$(find . -mindepth 1 -print -quit)" ]]; then
+    tar --numeric-owner -cf - --files-from /dev/null
+  else
+    tar --numeric-owner -cf - .
+  fi
+) | "$ZEEKSTD_BIN" "${ZEEKSTD_ARGS[@]}" -o "$OUTPUT"
+
+if [[ "$SHA256_ENABLED" -eq 1 ]]; then
+  write_sha256_manifest "$SOURCE_DIR" "$SHA256_FILE"
+fi
+
+if [[ "$REMOVE_SOURCE" -eq 1 ]]; then
+  log "Removing source directory: $SOURCE_DIR"
+  rm -rf -- "$SOURCE_DIR"
+fi
+
+log "Done: $OUTPUT"

@@ -14,6 +14,8 @@ entire manifest contents are identical to another.
 `convert-7z-to-tarzst.sh` rebuilds a `.7z` archive as a seekable `.tar.zst`
 payload using the [`zeekstd`](https://github.com/rorosen/zeekstd) CLI (install it
 locally via `./install-zeekstd.sh`).
+`create-tarzst.sh` tars any directory (numeric owners) and compresses it with
+`zeekstd` into a seekable `.tar.zst`.
 
 ## Required tools
 
@@ -149,6 +151,20 @@ the `.7z` once conversion succeeds. Add `--sha256` (optionally `--sha256 FILE`
 and `--sha256-append`) to emit a `sha256sum`-compatible manifest of every file
 inside the original archive; when the FILE argument is omitted the manifest
 defaults to `ARCHIVE_BASENAME.sha256`.
+
+## Create seekable `.tar.zst` from a directory
+
+Run:
+
+```
+./create-tarzst.sh /path/to/directory
+```
+
+This streams the given directory through `tar --numeric-owner` and compresses it
+with `zeekstd --force --compression-level 10`, yielding
+`directory.tar.zst`. Supply `-o FILE` to customize the destination, add
+`--zeekstd-arg ARG` repeatedly to tweak encoder behavior, or pass `--quiet` /
+`--force` for less logging and overwriting existing outputs.
 
 ## Decompression
 

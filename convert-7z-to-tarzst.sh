@@ -249,9 +249,9 @@ TMP_OUTPUT="$(mktemp -p "$(dirname -- "$OUTPUT")" "$(basename -- "$OUTPUT").tmp.
 
 tar_stream() {
   if [[ -z "$(find "$WORKDIR" -mindepth 1 -print -quit)" ]]; then
-    tar -C "$WORKDIR" -cf - --files-from /dev/null
+    tar --numeric-owner -C "$WORKDIR" -cf - --files-from /dev/null
   else
-    tar -C "$WORKDIR" -cf - .
+    tar --numeric-owner -C "$WORKDIR" -cf - .
   fi
 }
 
