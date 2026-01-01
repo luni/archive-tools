@@ -14,7 +14,7 @@ AUTO_SHA256_SENTINEL="__auto_sha256__"
 ZEEKSTD_BIN_FROM_FLAG=0
 ZEEKSTD_BIN="${ZEEKSTD_BIN:-${HOME}/.cargo/bin/zeekstd}"
 declare -a ZEEKSTD_ARGS
-ZEEKSTD_ARGS=(--force --level 10)
+ZEEKSTD_ARGS=(--force --compression-level 10)
 
 usage() {
   cat <<'EOF'
