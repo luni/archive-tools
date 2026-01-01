@@ -9,8 +9,8 @@ KEEP_WORKDIR=0
 REMOVE_SOURCE=0
 TEMP_PARENT=""
 SHA256_FILE=""
+SHA256_ENABLED=0
 SHA256_APPEND=0
-AUTO_SHA256_SENTINEL="__auto_sha256__"
 ZEEKSTD_BIN_FROM_FLAG=0
 ZEEKSTD_BIN="${ZEEKSTD_BIN:-${HOME}/.cargo/bin/zeekstd}"
 declare -a ZEEKSTD_ARGS
@@ -31,8 +31,8 @@ Options:
       --zeekstd PATH      Override zeekstd binary (default: ${HOME}/.cargo/bin/zeekstd)
       --zeekstd-arg ARG   Additional argument to pass to zeekstd (repeatable)
       --temp-dir DIR      Create the temporary extraction directory under DIR
-      --sha256 [FILE]     Write/overwrite FILE with SHA-256 of every file inside the archive
-                          (defaults to ARCHIVE basename + .sha256 when FILE omitted)
+      --sha256            Emit SHA-256 manifest (defaults to ARCHIVE basename + .sha256)
+      --sha256-file FILE  Emit SHA-256 manifest to FILE
       --sha256-append     Append to the SHA-256 file instead of truncating
   -f, --force             Overwrite the output file if it already exists
       --remove-source     Delete the original .7z archive after a successful conversion
@@ -135,13 +135,14 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --sha256)
-      if [[ $# -ge 2 && "$2" != -* ]]; then
-        SHA256_FILE="$2"
-        shift 2
-      else
-        SHA256_FILE="$AUTO_SHA256_SENTINEL"
-        shift
-      fi
+      SHA256_ENABLED=1
+      shift
+      ;;
+    --sha256-file)
+      [[ $# -lt 2 ]] && die "Missing value for $1"
+      SHA256_ENABLED=1
+      SHA256_FILE="$2"
+      shift 2
       ;;
     --sha256-append)
       SHA256_APPEND=1
@@ -200,17 +201,17 @@ if [[ -e "$OUTPUT" && "$FORCE" -ne 1 ]]; then
   die "Output already exists: $OUTPUT (use --force to overwrite)"
 fi
 
-if [[ "$SHA256_FILE" == "$AUTO_SHA256_SENTINEL" ]]; then
+if [[ "$SHA256_ENABLED" -eq 1 && -z "$SHA256_FILE" ]]; then
   SHA256_FILE="$(default_sha256_path "$ARCHIVE")"
 fi
 
-if [[ -n "$SHA256_FILE" ]]; then
+if [[ "$SHA256_ENABLED" -eq 1 ]]; then
   prepare_sha256_file "$SHA256_FILE" "$SHA256_APPEND"
 fi
 
 require_cmd 7z
 require_cmd tar
-if [[ -n "$SHA256_FILE" ]]; then
+if [[ "$SHA256_ENABLED" -eq 1 ]]; then
   require_cmd sha256sum
 fi
 
@@ -274,7 +275,7 @@ if [[ "$REMOVE_SOURCE" -eq 1 ]]; then
   rm -f -- "$ARCHIVE"
 fi
 
-if [[ -n "$SHA256_FILE" ]]; then
+if [[ "$SHA256_ENABLED" -eq 1 ]]; then
   write_sha256_manifest "$WORKDIR" "$SHA256_FILE"
 fi
 

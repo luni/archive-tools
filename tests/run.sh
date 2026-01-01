@@ -737,7 +737,7 @@ run_convert_7z_to_tarzst_test() {
   local convert_script="$REPO_ROOT/convert-7z-to-tarzst.sh"
   if ! ZEEKSTD_BIN="$ZEEKSTD_BIN_PATH" "$convert_script" \
       --output "$output_tar_zst" \
-      --sha256 "$manifest" \
+      --sha256-file "$manifest" \
       --remove-source \
       "$archive" >/dev/null; then
     echo "convert-7z-to-tarzst.sh failed to convert sample archive" >&2
