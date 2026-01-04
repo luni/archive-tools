@@ -42,7 +42,7 @@ _run_single_compress_test() {
     $((96 * 1024))
   )
 
-  declare -A expected_paths sha1_map sha256_map size_map
+  declare -A expected_paths sha1_map sha256_map size_map source_paths
   for idx in "${!fixture_paths[@]}"; do
     local path="${fixture_paths[$idx]}"
     local size="${fixture_sizes[$idx]}"
@@ -50,6 +50,7 @@ _run_single_compress_test() {
     mkdir -p -- "$(dirname -- "$full_path")"
     generate_test_file "$full_path" "$size" "Compression fixture $idx ($label)"
     expected_paths["$path"]="${full_path}.expected"
+    source_paths["$path"]="$full_path"
     size_map["$path"]="$size"
     cp -- "$full_path" "${expected_paths[$path]}"
     sha1_map["$path"]="$(sha1sum -- "$full_path" | awk '{print $1}')"
@@ -80,7 +81,8 @@ _run_single_compress_test() {
   local sha256_args=()
 
   for path in "${fixture_paths[@]}"; do
-    if [[ -f "$path" ]]; then
+    local original_path="${source_paths[$path]}"
+    if [[ -f "$original_path" ]]; then
       echo "Expected original file to be removed after compression: $path" >&2
       return 1
     fi
@@ -91,23 +93,24 @@ _run_single_compress_test() {
       compressor="$big_comp"
     fi
 
-    local compressed
-    compressed="$(compressed_name_for "$path" "$compressor")"
+    local compressed_rel
+    compressed_rel="$(compressed_name_for "$path" "$compressor")"
+    local compressed="$tmpdir/$compressed_rel"
 
     if [[ ! -f "$compressed" ]]; then
       echo "Compressed file not created: $compressed" >&2
       return 1
     fi
 
-    local decompressed="${path}.dec"
+    local decompressed="$tmpdir/${path}.dec"
     decompress_with "$compressor" "$compressed" "$decompressed"
     if ! cmp -s "${expected_paths[$path]}" "$decompressed"; then
       echo "Compressed file contents mismatch for $path (${compressor})" >&2
       return 1
     fi
 
-    sha1_args+=("$path" "${sha1_map[$path]}")
-    sha256_args+=("$path" "${sha256_map[$path]}")
+    sha1_args+=("${source_paths[$path]}" "${sha1_map[$path]}")
+    sha256_args+=("${source_paths[$path]}" "${sha256_map[$path]}")
   done
 
   verify_checksum_file "$sha1_file" "${sha1_args[@]}"

@@ -65,11 +65,12 @@ _run_single_decompress_test() {
   "$DECOMPRESS_SCRIPT" "${args[@]}" >/dev/null
 
   for path in "${files[@]}"; do
-    if [[ ! -f "$path" ]]; then
+    local restored="$tmpdir/$path"
+    if [[ ! -f "$restored" ]]; then
       echo "decompress.sh did not recreate original file: $path (${label})" >&2
       return 1
     fi
-    if ! cmp -s "${expected_paths[$path]}" "$path"; then
+    if ! cmp -s "${expected_paths[$path]}" "$restored"; then
       echo "Decompressed contents differ for $path (${label})" >&2
       return 1
     fi

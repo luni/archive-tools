@@ -85,7 +85,7 @@ verify_checksum_file() {
 
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -z "$line" ]] && continue
-    if [[ "$line" =~ ^([[:xdigit:]]{64})[[:space:]][[:space:]]+(.+)$ ]]; then
+    if [[ "$line" =~ ^([[:xdigit:]]{40}|[[:xdigit:]]{64})[[:space:]][[:space:]]+(.+)$ ]]; then
       local hash="${BASH_REMATCH[1]}"
       local path="${BASH_REMATCH[2]}"
       if [[ -n "${expected[$path]:-}" ]]; then
