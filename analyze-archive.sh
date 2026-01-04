@@ -275,29 +275,7 @@ stream_entry() {
       "$SEVENZ_BIN" x -so -p"$ARCHIVE_PASSWORD" -- "$archive" "$entry"
       ;;
     rar)
-      # unrar p will fail on directories, so we need to handle that
-      local output
-      if ! output="$(unrar p -idq -p"$ARCHIVE_PASSWORD" -- "$archive" "$entry" 2>&1)"; then
-        # If extraction fails, it might be a directory or password error
-        # Check if it's a password error (exit code 11) or directory issue
-        local exit_code=$?
-        if [[ $exit_code -eq 11 ]]; then
-          echo "Incorrect password for $entry" >&2
-          return 1
-        else
-          # Likely a directory, skip it
-          return 0
-        fi
-      fi
-
-      # Check if output is empty (which also indicates password error)
-      if [[ -z "$output" ]]; then
-        echo "Incorrect password for $entry" >&2
-        return 1
-      fi
-
-      # Output the file content
-      printf '%s' "$output"
+      unrar p -idq -p"$ARCHIVE_PASSWORD" -- "$archive" "$entry"
       ;;
     *)
       die "Unsupported archive type for streaming: $ARCHIVE_TYPE"
