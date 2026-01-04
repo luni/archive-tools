@@ -362,10 +362,9 @@ fi
 printf 'processing: %s\n' "$f" >&2
 hash="$(sha256sum | awk '{print $1}')"
 if [[ -n "${TMP_MANIFEST:-}" ]]; then
-  printf '%s  %s\n' "$hash" "$f" | tee -a "$TMP_MANIFEST"
-else
-  printf '%s  %s\n' "$hash" "$f"
+  printf '%s\t%s\n' "$hash" "$f" >>"$TMP_MANIFEST"
 fi
+printf '%s  %s\n' "$hash" "$f"
 EOF
     chmod +x "$tmp_tar_command"
 
@@ -413,7 +412,8 @@ else
       rm -f "$tmp_entries_list"
       die "Failed to compute SHA-256 for $entry"
     fi
-    printf '%s  %s\n' "$hash" "$entry" | tee -a "$tmp_manifest"
+    printf '%s\t%s\n' "$hash" "$entry" >>"$tmp_manifest"
+    printf '%s  %s\n' "$hash" "$entry"
   done <"$tmp_entries_list"
   rm -f "$tmp_entries_list"
 fi
