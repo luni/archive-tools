@@ -107,3 +107,72 @@ verify_checksum_file() {
     fi
   done
 }
+
+create_test_fixture() {
+  local base_dir="$1"
+  local -n paths_ref="$2"
+  local -n sizes_ref="$3"
+  local seed_prefix="$4"
+
+  declare -A hashes
+  for idx in "${!paths_ref[@]}"; do
+    local path="${paths_ref[$idx]}"
+    local size="${sizes_ref[$idx]}"
+    local full_path="$base_dir/$path"
+    mkdir -p -- "$(dirname -- "$full_path")"
+    generate_test_file "$full_path" "$size" "$seed_prefix $idx"
+    hashes["$path"]="$(sha256sum -- "$full_path" | awk '{print $1}')"
+  done
+
+  for path in "${!hashes[@]}"; do
+    printf '%s\n' "${hashes[$path]}"
+  done
+}
+
+verify_extracted_files() {
+  local original_dir="$1"
+  local extracted_dir="$2"
+  shift 2
+  local rel_paths=("$@")
+
+  for rel in "${rel_paths[@]}"; do
+    local original="$original_dir/$rel"
+    local restored="$extracted_dir/$rel"
+    if [[ ! -f "$restored" ]]; then
+      echo "Missing file in extracted archive: $rel" >&2
+      return 1
+    fi
+    if ! cmp -s "$original" "$restored"; then
+      echo "File mismatch for $rel" >&2
+      return 1
+    fi
+  done
+}
+
+extract_and_verify_tarzst() {
+  local tarzst_file="$1"
+  local original_dir="$2"
+  local tmpdir="$3"
+  shift 3
+  local rel_paths=("$@")
+
+  local reconstructed_tar="$tmpdir/reconstructed.tar"
+  zstd -d -q -c -- "$tarzst_file" >"$reconstructed_tar"
+
+  local extract_dir="$tmpdir/extracted"
+  mkdir -p "$extract_dir"
+  tar -C "$extract_dir" -xf "$reconstructed_tar"
+
+  verify_extracted_files "$original_dir" "$extract_dir" "${rel_paths[@]}"
+}
+
+run_test_with_tmpdir() {
+  local test_function="$1"
+  shift
+
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  TMP_DIRS+=("$tmpdir")
+
+  "$test_function" "$tmpdir" "$@"
+}

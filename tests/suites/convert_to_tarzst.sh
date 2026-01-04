@@ -22,10 +22,11 @@ require_cmd pzstd
 run_convert_to_tarzst_suite() {
   log "Verifying convert-to-tarzst.sh handles 7z with SHA256 manifests"
 
-  local tmpdir
-  tmpdir="$(mktemp -d)"
-  TMP_DIRS+=("$tmpdir")
+  run_test_with_tmpdir _run_convert_to_tarzst_suite
+}
 
+_run_convert_to_tarzst_suite() {
+  local tmpdir="$1"
   local input_dir="$tmpdir/input"
   mkdir -p "$input_dir"
 
@@ -68,20 +69,9 @@ run_convert_to_tarzst_suite() {
     return 1
   fi
 
-  if [[ -e "$archive" ]]; then
-    echo "Source archive was not removed despite --remove-source" >&2
-    return 1
-  fi
-
-  if [[ ! -f "$output_tar_zst" ]]; then
-    echo "Output tar.zst not created" >&2
-    return 1
-  fi
-
-  if [[ ! -f "$manifest" ]]; then
-    echo "SHA256 manifest not created" >&2
-    return 1
-  fi
+  [[ -e "$archive" ]] && { echo "Source archive was not removed despite --remove-source" >&2; return 1; }
+  [[ -f "$output_tar_zst" ]] || { echo "Output tar.zst not created" >&2; return 1; }
+  [[ -f "$manifest" ]] || { echo "SHA256 manifest not created" >&2; return 1; }
 
   local verify_args=()
   for rel in "${rel_paths[@]}"; do
@@ -89,25 +79,7 @@ run_convert_to_tarzst_suite() {
   done
   verify_checksum_file "$manifest" "${verify_args[@]}"
 
-  local reconstructed_tar="$tmpdir/output.tar"
-  zstd -d -q -c -- "$output_tar_zst" >"$reconstructed_tar"
-
-  local extract_dir="$tmpdir/extracted"
-  mkdir -p "$extract_dir"
-  tar -C "$extract_dir" -xf "$reconstructed_tar"
-
-  for rel in "${rel_paths[@]}"; do
-    local original="$input_dir/$rel"
-    local restored="$extract_dir/$rel"
-    if [[ ! -f "$restored" ]]; then
-      echo "Missing file in reconstructed tar: $rel" >&2
-      return 1
-    fi
-    if ! cmp -s "$original" "$restored"; then
-      echo "Restored file mismatch for $rel" >&2
-      return 1
-    fi
-  done
+  extract_and_verify_tarzst "$output_tar_zst" "$input_dir" "$tmpdir" "${rel_paths[@]}"
 
   log "Testing tar.gz/tar.xz/tar.bz2 conversion with SHA256"
   local tar_test_dir="$tmpdir/tar_test"

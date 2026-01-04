@@ -17,10 +17,12 @@ run_analyze_archive_case() {
   local archive_type="$1"
   log "Running analyze-archive.sh test (${archive_type})"
 
-  local tmpdir
-  tmpdir="$(mktemp -d)"
-  TMP_DIRS+=("$tmpdir")
+  run_test_with_tmpdir _run_analyze_archive_case "$archive_type"
+}
 
+_run_analyze_archive_case() {
+  local tmpdir="$1"
+  local archive_type="$2"
   local input_dir="$tmpdir/input"
   local archive
   local expected_log=""
@@ -167,10 +169,11 @@ run_analyze_archive_case() {
 run_analyze_archive_invalid_cases() {
   log "Running analyze-archive.sh invalid archive tests"
 
-  local tmpdir
-  tmpdir="$(mktemp -d)"
-  TMP_DIRS+=("$tmpdir")
+  run_test_with_tmpdir _run_analyze_archive_invalid_cases
+}
 
+_run_analyze_archive_invalid_cases() {
+  local tmpdir="$1"
   local -a types=("7z" "tar" "zip")
 
   for archive_type in "${types[@]}"; do

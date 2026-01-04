@@ -14,14 +14,18 @@ run_single_decompress_test() {
   local remove_flag="$1" label="$2"
   log "Running decompress.sh test (${label})"
 
-  local tmpdir
-  tmpdir="$(mktemp -d)"
-  TMP_DIRS+=("$tmpdir")
+  run_test_with_tmpdir _run_single_decompress_test "$remove_flag" "$label"
+}
+
+_run_single_decompress_test() {
+  local tmpdir="$1"
+  local remove_flag="$2"
+  local label="$3"
 
   local files=(
-    "$tmpdir/source.txt"
-    "$tmpdir/nested folder/bravo.sql"
-    "$tmpdir/special chars/Ωmega (final).txt"
+    "source.txt"
+    "nested folder/bravo.sql"
+    "special chars/Ωmega (final).txt"
   )
   local sizes=(
     $((96 * 1024))
@@ -38,19 +42,20 @@ run_single_decompress_test() {
   for idx in "${!files[@]}"; do
     local path="${files[$idx]}"
     local compressor="${compressors[$idx]}"
-    mkdir -p -- "$(dirname -- "$path")"
-    generate_test_file "$path" "${sizes[$idx]}" "Decompression payload $idx (${label})"
-    expected_paths["$path"]="${path}.expected"
-    cp -- "$path" "${expected_paths[$path]}"
+    local full_path="$tmpdir/$path"
+    mkdir -p -- "$(dirname -- "$full_path")"
+    generate_test_file "$full_path" "${sizes[$idx]}" "Decompression payload $idx (${label})"
+    expected_paths["$path"]="${full_path}.expected"
+    cp -- "$full_path" "${expected_paths[$path]}"
 
     local compressed
-    compressed="$(compressed_name_for "$path" "$compressor")"
+    compressed="$(compressed_name_for "$full_path" "$compressor")"
     case "$compressor" in
-      xz) xz -c -- "$path" >"$compressed" ;;
-      zstd) zstd -q -c -- "$path" >"$compressed" ;;
+      xz) xz -c -- "$full_path" >"$compressed" ;;
+      zstd) zstd -q -c -- "$full_path" >"$compressed" ;;
     esac
     compressed_paths["$path"]="$compressed"
-    rm -f -- "$path"
+    rm -f -- "$full_path"
   done
 
   local args=(--dir "$tmpdir")

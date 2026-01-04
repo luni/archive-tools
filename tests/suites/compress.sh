@@ -17,19 +17,23 @@ run_single_compress_test() {
   local small_comp="$1" big_comp="$2" label="$3"
   log "Running compress.sh test (${label})"
 
-  local tmpdir
-  tmpdir="$(mktemp -d)"
-  TMP_DIRS+=("$tmpdir")
+  run_test_with_tmpdir _run_single_compress_test "$small_comp" "$big_comp" "$label"
+}
 
+_run_single_compress_test() {
+  local tmpdir="$1"
+  local small_comp="$2"
+  local big_comp="$3"
+  local label="$4"
   local threshold_bytes=$((2 * 1024))
   local sha1_file="$tmpdir/checksums.sha1"
   local sha256_file="$tmpdir/checksums.sha256"
 
   local fixture_paths=(
-    "$tmpdir/small.txt"
-    "$tmpdir/sub dir/medium file.txt"
-    "$tmpdir/big data/bigfile.sql"
-    "$tmpdir/special chars/über@Data!.txt"
+    "small.txt"
+    "sub dir/medium file.txt"
+    "big data/bigfile.sql"
+    "special chars/über@Data!.txt"
   )
   local fixture_sizes=(
     512
@@ -42,13 +46,14 @@ run_single_compress_test() {
   for idx in "${!fixture_paths[@]}"; do
     local path="${fixture_paths[$idx]}"
     local size="${fixture_sizes[$idx]}"
-    mkdir -p -- "$(dirname -- "$path")"
-    generate_test_file "$path" "$size" "Compression fixture $idx ($label)"
-    expected_paths["$path"]="${path}.expected"
+    local full_path="$tmpdir/$path"
+    mkdir -p -- "$(dirname -- "$full_path")"
+    generate_test_file "$full_path" "$size" "Compression fixture $idx ($label)"
+    expected_paths["$path"]="${full_path}.expected"
     size_map["$path"]="$size"
-    cp -- "$path" "${expected_paths[$path]}"
-    sha1_map["$path"]="$(sha1sum -- "$path" | awk '{print $1}')"
-    sha256_map["$path"]="$(sha256sum -- "$path" | awk '{print $1}')"
+    cp -- "$full_path" "${expected_paths[$path]}"
+    sha1_map["$path"]="$(sha1sum -- "$full_path" | awk '{print $1}')"
+    sha256_map["$path"]="$(sha256sum -- "$full_path" | awk '{print $1}')"
   done
 
   local output

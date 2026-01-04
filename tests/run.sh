@@ -31,6 +31,7 @@ declare -a SUITES=(
   "find_duplicate.sh::Duplicate detector"
   "convert_to_tarzst.sh::7z ➜ seekable tar.zst converter"
   "create_tarzst.sh::Directory ➜ seekable tar.zst creator"
+  "hash_folder.sh::SHA-256 folder hasher"
 )
 
 plan() {
