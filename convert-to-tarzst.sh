@@ -17,7 +17,7 @@ SHA256_ENABLED=0
 SHA256_APPEND=0
 ARCHIVE_TYPE=""
 INPUT_STREAM_DESC=""
-PZSTD_LEVEL="-10"
+PZSTD_LEVEL="$DEFAULT_PZSTD_LEVEL"
 declare -a INPUT_STREAM_CMD=()
 
 usage() {
@@ -45,7 +45,7 @@ Options:
       --sha256-file FILE  Emit SHA-256 manifest to FILE
       --sha256-append     Append to the SHA-256 file instead of truncating
   -f, --force             Overwrite the output file if it already exists
-      --remove-source     Delete the original archive after a successful conversion
+  -r, --remove-source     Delete the original archive after a successful conversion
   -q, --quiet             Suppress progress logs
   -k, --keep-temp         Keep the temporary extraction directory (printed on success;
                            only useful for .7z and .zip inputs)
@@ -53,46 +53,6 @@ Options:
 EOF
 }
 
-log() {
-  [[ "$QUIET" -eq 1 ]] && return 0
-  printf '%s\n' "$*" >&2
-}
-
-default_basename_path() {
-  local archive="$1" dir base
-  dir="$(dirname -- "$archive")"
-  base="$(basename -- "$archive")"
-  local lowered="${base,,}"
-  case "$lowered" in
-    *.tar.gz|*.tar.xz|*.tar.bz2)
-      base="${base%.*}"
-      base="${base%.*}"
-      ;;
-    *.tgz|*.txz|*.tbz|*.tbz2)
-      base="${base%.*}"
-      ;;
-    *.7z|*.zip)
-      base="${base%.*}"
-      ;;
-  esac
-  printf '%s/%s\n' "$dir" "$base"
-}
-
-default_sha256_path() {
-  local archive="$1"
-  printf '%s.sha256\n' "$(default_basename_path "$archive")"
-}
-
-detect_tar_compression() {
-  local archive="$1"
-  local lowered="${archive,,}"
-  case "$lowered" in
-    *.tar.gz|*.tgz) echo "gz" ;;
-    *.tar.bz2|*.tbz|*.tbz2) echo "bz2" ;;
-    *.tar.xz|*.txz) echo "xz" ;;
-    *) echo "none" ;;
-  esac
-}
 
 tar_list_entries() {
   local archive="$1" dest="$2" compression="$3"
@@ -182,30 +142,6 @@ EOF
   rm -f "$tmp_files" "$tmp_command" "$tmp_manifest"
 }
 
-detect_archive_type() {
-  local archive="$1"
-  local lowered="${archive,,}"
-  case "$lowered" in
-    *.7z)
-      printf '7z'
-      ;;
-    *.tar.gz|*.tgz)
-      printf 'tar.gz'
-      ;;
-    *.tar.xz|*.txz)
-      printf 'tar.xz'
-      ;;
-    *.tar.bz2|*.tbz|*.tbz2)
-      printf 'tar.bz2'
-      ;;
-    *.zip)
-      printf 'zip'
-      ;;
-    *)
-      die "Unsupported archive extension for $archive (supported: .7z, .tar.gz/.tgz, .tar.xz/.txz, .tar.bz2/.tbz/.tbz2, .zip)"
-      ;;
-  esac
-}
 
 setup_stream_input() {
   case "$ARCHIVE_TYPE" in
@@ -234,12 +170,12 @@ WORKDIR=""
 TMP_OUTPUT=""
 cleanup() {
   if [[ "$KEEP_WORKDIR" -eq 0 && -n "$WORKDIR" && -d "$WORKDIR" ]]; then
-    rm -rf -- "$WORKDIR"
+    rm -rf -- "$WORKDIR" || true
   elif [[ -n "$WORKDIR" && -d "$WORKDIR" ]]; then
     log "Temporary directory kept at: $WORKDIR"
   fi
   if [[ -n "$TMP_OUTPUT" && -f "$TMP_OUTPUT" ]]; then
-    rm -f -- "$TMP_OUTPUT"
+    rm -f -- "$TMP_OUTPUT" || true
   fi
 }
 trap cleanup EXIT INT TERM
@@ -275,7 +211,7 @@ while [[ $# -gt 0 ]]; do
       SHA256_APPEND=1
       shift
       ;;
-    --remove-source)
+    -r|--remove-source)
       REMOVE_SOURCE=1
       shift
       ;;
@@ -356,12 +292,7 @@ if [[ -n "$TEMP_PARENT" ]]; then
 fi
 
 if [[ "$ARCHIVE_TYPE" == "7z" ]]; then
-  template="convert-to-tarzst.XXXXXX"
-  if [[ -n "$TEMP_PARENT" ]]; then
-    WORKDIR="$(mktemp -d -p "$TEMP_PARENT" "$template")" || die "Failed to create temporary directory under $TEMP_PARENT"
-  else
-    WORKDIR="$(mktemp -d)" || die "Failed to create temporary directory"
-  fi
+  WORKDIR="$(create_temp_dir "convert-to-tarzst" "$TEMP_PARENT")"
   log "Extracting $ARCHIVE into $WORKDIR ..."
   if [[ "$QUIET" -eq 1 ]]; then
     7z x -y -bso0 -bsp0 -o"$WORKDIR" -- "$ARCHIVE" >/dev/null
@@ -369,12 +300,7 @@ if [[ "$ARCHIVE_TYPE" == "7z" ]]; then
     7z x -y -bso0 -bsp1 -o"$WORKDIR" -- "$ARCHIVE"
   fi
 elif [[ "$ARCHIVE_TYPE" == "zip" ]]; then
-  template="convert-to-tarzst.XXXXXX"
-  if [[ -n "$TEMP_PARENT" ]]; then
-    WORKDIR="$(mktemp -d -p "$TEMP_PARENT" "$template")" || die "Failed to create temporary directory under $TEMP_PARENT"
-  else
-    WORKDIR="$(mktemp -d)" || die "Failed to create temporary directory"
-  fi
+  WORKDIR="$(create_temp_dir "convert-to-tarzst" "$TEMP_PARENT")"
   log "Extracting $ARCHIVE into $WORKDIR ..."
   if [[ "$QUIET" -eq 1 ]]; then
     unzip -q -d "$WORKDIR" -- "$ARCHIVE" >/dev/null
@@ -436,7 +362,9 @@ fi
 if [[ "$SHA256_ENABLED" -eq 1 ]]; then
   case "$ARCHIVE_TYPE" in
     7z|zip)
-      write_sha256_manifest "$WORKDIR" "$SHA256_FILE"
+      if ! write_sha256_manifest "$WORKDIR" "$SHA256_FILE"; then
+        die "Failed to write SHA256 manifest"
+      fi
       ;;
   esac
 fi

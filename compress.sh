@@ -19,18 +19,18 @@ SMALL_JOBS=8
 SMALL_COMPRESSOR="xz"   # xz | zstd
 BIG_COMPRESSOR="pixz"   # pixz | xz | pzstd | zstd
 
-XZ_LEVEL="-5"
-ZSTD_LEVEL="-6"
-PZSTD_LEVEL="-10"
+XZ_LEVEL="$DEFAULT_XZ_LEVEL"
+ZSTD_LEVEL="$DEFAULT_ZSTD_LEVEL"
+PZSTD_LEVEL="$DEFAULT_PZSTD_LEVEL"
 
-LOG=1
+QUIET=0
 EXTENSIONS=(tar sql txt csv ibd xlsx docx)
 EXTENSIONS_CUSTOMIZED=0
 
 usage() {
   cat >&2 <<'EOF'
 Usage:
-  compress-mixed.sh [options]
+  compress.sh [options]
 
 Options:
   -d, --dir DIR           Directory to scan (default: .)
@@ -66,12 +66,6 @@ parse_size() {
   if [[ "$s" =~ ^([0-9]+)(g|gb|gib)$ ]]; then n="${BASH_REMATCH[1]}"; echo $((n*1024*1024*1024)); return 0; fi
   echo "Invalid size: $1" >&2
   exit 2
-}
-
-log() {
-  if [[ "$LOG" == "1" ]]; then
-    printf '%s\n' "$*" >&2
-  fi
 }
 
 emit_checksum_lines() {
@@ -134,7 +128,7 @@ while [[ $# -gt 0 ]]; do
       done
       shift 2
       ;;
-    -q|--quiet) LOG=0; shift ;;
+    -q|--quiet) QUIET=1; shift ;;
     -h|--help) usage; exit 0 ;;
     --) shift; break ;;
     *) echo "Unknown option: $1" >&2; usage; exit 2 ;;
@@ -254,7 +248,7 @@ compress_big_seq() {
 }
 
 export -f compress_small out_name emit_checksum_lines log
-export SMALL_COMPRESSOR XZ_LEVEL ZSTD_LEVEL LOG SHA1_FILE SHA256_FILE CHECKSUM_DELIM
+export SMALL_COMPRESSOR XZ_LEVEL ZSTD_LEVEL QUIET SHA1_FILE SHA256_FILE CHECKSUM_DELIM REMOVE_SOURCE
 
 small_list="$(mktemp)"
 big_list="$(mktemp)"

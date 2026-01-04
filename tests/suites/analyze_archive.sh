@@ -74,8 +74,6 @@ run_analyze_archive_case() {
 
   local output
   if ! output="$("$REPO_ROOT/analyze-archive.sh" "$archive" 2>&1)"; then
-    echo "analyze-archive.sh failed during manifest generation (${archive_type})" >&2
-    echo "$output" >&2
     return 1
   fi
 

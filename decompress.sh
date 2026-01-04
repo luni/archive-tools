@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 SCAN_DIR="."
-LOG=1
+QUIET=0
 REMOVE_COMPRESSED=0
 CUSTOM_COMPRESSORS=0
 SUPPORTED_COMPRESSORS=(pixz pzstd pigz pbzip2)
@@ -21,13 +21,11 @@ Options:
   -c, --compressor NAME     Limit to a decompressor (pixz, pzstd, pigz, pbzip2).
                             May be repeated or receive a comma-separated list.
                             First use replaces defaults.
-      --remove-compressed   Delete the compressed file after a successful restore.
+  -r, --remove-source       Delete the compressed file after a successful restore.
   -q, --quiet               Suppress info logs.
   -h, --help                Show this help text.
 EOF
 }
-
-log() { [[ "$LOG" == "1" ]] && printf '%s\n' "$*" >&2; }
 
 compressor_enabled() {
   local needle="$1"
@@ -77,8 +75,8 @@ while [[ $# -gt 0 ]]; do
       add_compressors "$2"
       shift 2
       ;;
-    --remove-compressed) REMOVE_COMPRESSED=1; shift ;;
-    -q|--quiet) LOG=0; shift ;;
+    -r|--remove-source|--remove-compressed) REMOVE_COMPRESSED=1; shift ;;
+    -q|--quiet) QUIET=1; shift ;;
     -h|--help) usage; exit 0 ;;
     --) shift; break ;;
     *) die "Unknown option: $1" ;;
@@ -93,12 +91,6 @@ for comp in "${SUPPORTED_COMPRESSORS[@]}"; do
   command -v "$comp" >/dev/null 2>&1 || die "Required tool '$comp' is not on PATH."
 done
 
-declare -A COMPRESSOR_EXTS=(
-  [pixz]="xz txz"
-  [pzstd]="zst tzst"
-  [pigz]="gz tgz"
-  [pbzip2]="bz2 tbz tbz2"
-)
 
 ext_pred=()
 add_predicate() {
@@ -119,11 +111,6 @@ if [[ "${#ext_pred[@]}" -eq 0 ]]; then
   log "No file patterns configured; exiting."
   exit 0
 fi
-
-restore_mtime() {
-  local src="$1" dst="$2"
-  touch -r "$src" "$dst"
-}
 
 decompress_file() {
   local f="$1" compressor out tmp

@@ -34,14 +34,10 @@ Options:
       --sha256-append Append to the SHA-256 file instead of truncating
       --remove-source Delete DIRECTORY after a successful archive
   -f, --force         Overwrite existing output file
+  -r, --remove-source Delete DIRECTORY after a successful archive
   -q, --quiet         Suppress progress logs
   -h, --help          Show this help message
 EOF
-}
-
-log() {
-  [[ "$QUIET" -eq 1 ]] && return 0
-  printf '%s\n' "$*" >&2
 }
 
 default_output_path() {

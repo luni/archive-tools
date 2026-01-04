@@ -39,30 +39,6 @@ Options:
 EOF
 }
 
-log() {
-  [[ "$QUIET" -eq 1 ]] && return 0
-  printf '%s\n' "$*" >&2
-}
-
-default_output_path() {
-  local archive="$1" dir base
-  dir="$(dirname -- "$archive")"
-  base="$(basename -- "$archive")"
-  if [[ "$base" == *.* ]]; then
-    base="${base%.*}"
-  fi
-  printf '%s/%s.sha256\n' "$dir" "$base"
-}
-
-detect_archive_type() {
-  local archive="$1"
-  case "${archive,,}" in
-    *.7z) echo "7z" ;;
-    *.tar|*.tar.*|*.tgz|*.tbz|*.tbz2|*.txz|*.tlz|*.taz|*.tar.gz|*.tar.xz|*.tar.zst|*.tar.bz2|*.tzst) echo "tar" ;;
-    *.zip) echo "zip" ;;
-    *) echo "unknown" ;;
-  esac
-}
 
 list_archive_files_7z() {
   local archive="$1"
@@ -117,16 +93,6 @@ list_archive_files_7z() {
   flush_entry
 }
 
-detect_tar_compression() {
-  local archive="${1,,}"
-  case "$archive" in
-    *.tar.gz|*.tgz|*.taz) echo "gz" ;;
-    *.tar.bz2|*.tbz|*.tbz2) echo "bz2" ;;
-    *.tar.xz|*.txz|*.tlz) echo "xz" ;;
-    *.tar.zst|*.tzst) echo "zst" ;;
-    *) echo "none" ;;
-  esac
-}
 
 require_tar_filter_tool() {
   case "$TAR_COMPRESSION" in
@@ -320,6 +286,16 @@ case "$ARCHIVE_TYPE" in
     ;;
 esac
 require_cmd sha256sum
+
+default_output_path() {
+  local archive="$1" dir base
+  dir="$(dirname -- "$archive")"
+  base="$(basename -- "$archive")"
+  if [[ "$base" == *.* ]]; then
+    base="${base%.*}"
+  fi
+  printf '%s/%s.sha256\n' "$dir" "$base"
+}
 
 if [[ -z "$OUTPUT_FILE" ]]; then
   OUTPUT_FILE="$(default_output_path "$ARCHIVE")"
