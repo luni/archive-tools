@@ -91,7 +91,7 @@ while [[ $# -gt 0 ]]; do
       SHA256_APPEND=1
       shift
       ;;
-    --remove-source)
+    -r|--remove-source)
       REMOVE_SOURCE=1
       shift
       ;;
