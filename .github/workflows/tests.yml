@@ -22,7 +22,7 @@ jobs:
         run: |
           sudo apt-get update
           DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends \
-            xz-utils pixz zstd parallel pv python3 pbzip2 pigz p7zip-full unzip unrar rar
+            xz-utils pixz zstd parallel pv python3 pbzip2 pigz p7zip-full unrar rar
           sudo rm -rf /var/lib/apt/lists/*
 
       - name: Run tests

@@ -15,7 +15,6 @@ require_cmd pixz
 require_cmd pbzip2
 require_cmd zstd
 require_cmd zip
-require_cmd unzip
 require_cmd sha256sum
 require_cmd pzstd
 
@@ -169,16 +168,7 @@ _run_convert_to_tarzst_suite() {
     zip_expected_hashes["$rel"]="$(sha256sum -- "$abs" | awk '{print $1}')"
   done
 
-  local -a zip_compressors=()
-  while IFS= read -r comp; do
-    [[ -z "$comp" ]] && continue
-    zip_compressors+=("$comp")
-  done < <(zip_supported_compressors)
-
-  if [[ "${#zip_compressors[@]}" -eq 0 ]]; then
-    echo "No ZIP compression methods available for testing" >&2
-    return 1
-  fi
+  local -a zip_compressors=("store" "deflate" "bzip2" "lzma")
 
   for compression in "${zip_compressors[@]}"; do
     log "  -> ZIP compressor: $compression"

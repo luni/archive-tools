@@ -277,7 +277,7 @@ if [[ "$ARCHIVE_TYPE" == "7z" ]]; then
   require_cmd 7z
   require_cmd tar
 elif [[ "$ARCHIVE_TYPE" == "zip" ]]; then
-  require_cmd unzip
+  require_cmd 7z
   require_cmd tar
 else
   setup_stream_input
@@ -306,9 +306,9 @@ elif [[ "$ARCHIVE_TYPE" == "zip" ]]; then
   WORKDIR="$(create_temp_dir "convert-to-tarzst" "$TEMP_PARENT")"
   log "Extracting $ARCHIVE into $WORKDIR ..."
   if [[ "$QUIET" -eq 1 ]]; then
-    unzip -q -d "$WORKDIR" -- "$ARCHIVE" >/dev/null
+    7z x -y -bso0 -bsp0 -o"$WORKDIR" -- "$ARCHIVE" >/dev/null
   else
-    unzip -d "$WORKDIR" -- "$ARCHIVE"
+    7z x -y -bso0 -bsp1 -o"$WORKDIR" -- "$ARCHIVE"
   fi
 fi
 

@@ -38,8 +38,7 @@ current status of that workflow on the `main` branch.
 | `pixz` | Default compressor for “big” files; enables parallel xz for large archives and is used by `decompress.sh`. |
 | `pigz` | Parallel gzip implementation used by `decompress.sh`, `convert-to-tarzst.sh`, and `analyze-archive.sh`. |
 | `pbzip2` | Parallel bzip2 implementation used by `decompress.sh`, `convert-to-tarzst.sh`, and `analyze-archive.sh`. |
-| `7z` **or** `7zr` | Required for `analyze-archive.sh` when inspecting `.7z` archives. |
-| `unzip` | Required for `analyze-archive.sh` when inspecting `.zip` archives. |
+| `7z` **or** `7zr` | Required for `analyze-archive.sh` when inspecting `.7z` and `.zip` archives. |
 | `unrar` | Required for `analyze-archive.sh` when inspecting `.rar` archives. |
 | GNU `parallel` | Runs many small compression jobs concurrently. |
 | `pzstd` | Required to emit or read seekable `.tar.zst` outputs (`convert-to-tarzst.sh`, `create-tarzst.sh`, `decompress.sh`, `analyze-archive.sh`). Provided by the `zstd` package. |
@@ -48,7 +47,7 @@ These tools must be on `$PATH`; the script will exit early when a required tool
 is missing. On Debian/Ubuntu systems you can install the full toolset with:
 
 ```
-sudo apt install bash coreutils pv xz-utils pixz pigz pbzip2 parallel p7zip-full unzip unrar zstd fzf
+sudo apt install bash coreutils pv xz-utils pixz pigz pbzip2 parallel p7zip-full unrar zstd fzf
 ```
 
 ## Optional tools
@@ -144,8 +143,7 @@ prompt is shown so you can still pick the targets interactively.
 
 ## Convert `.7z`/`.zip`/`.tar.*` to seekable `.tar.zst`
 
-1. Convert `.7z` **or** `.zip` archives (extracted to a temp dir with `7z` or
-   `unzip`) or `.tar.{gz,xz,bz2}` inputs (streamed via pipes) to seekable
+1. Convert `.7z` **or** `.zip` archives (extracted to a temp dir with `7z`) or `.tar.{gz,xz,bz2}` inputs (streamed via pipes) to seekable
    `.tar.zst`:
 
    ```(bash)
@@ -154,7 +152,7 @@ prompt is shown so you can still pick the targets interactively.
    ./convert-to-tarzst.sh backups.tar.gz
    ```
 
-The script extracts `.7z` sources with `7z` and `.zip` sources with `unzip` into
+The script extracts `.7z` and `.zip` sources with `7z` into
 temporary directories, streams the contents through `tar`, and pipes them into
 `pzstd` to produce `backups.tar.zst` alongside the original. `.tar.gz/.tgz`,
 `.tar.xz/.txz`, and `.tar.bz2/.tbz*` inputs skip the extraction step entirely;
