@@ -7,7 +7,7 @@ parallel, while bigger blobs are streamed sequentially with progress output.
 artifacts via the parallel decompressors `pixz`, `pzstd`, `pigz`, and `pbzip2`,
 writing the expanded file next to the source and preserving mtimes (optionally
 removing the original).
-`analyze-archive.sh` inspects `.7z`, `.tar*`, or `.zip` archives and produces a
+`analyze-archive.sh` inspects `.7z`, `.rar`, `.tar*`, or `.zip` archives and produces a
 sorted manifest with the SHA-256 of every file inside without touching disk.
 `find-duplicate-sha256.sh` scans directories for those manifests, reports when
 the same digest appears in multiple archives, can skip intra-manifest duplicates
@@ -40,6 +40,7 @@ current status of that workflow on the `main` branch.
 | `pbzip2` | Parallel bzip2 implementation used by `decompress.sh`, `convert-to-tarzst.sh`, and `analyze-archive.sh`. |
 | `7z` **or** `7zr` | Required for `analyze-archive.sh` when inspecting `.7z` archives. |
 | `unzip` | Required for `analyze-archive.sh` when inspecting `.zip` archives. |
+| `unrar` | Required for `analyze-archive.sh` when inspecting `.rar` archives. |
 | GNU `parallel` | Runs many small compression jobs concurrently. |
 | `pzstd` | Required to emit or read seekable `.tar.zst` outputs (`convert-to-tarzst.sh`, `create-tarzst.sh`, `decompress.sh`, `analyze-archive.sh`). Provided by the `zstd` package. |
 
@@ -47,7 +48,7 @@ These tools must be on `$PATH`; the script will exit early when a required tool
 is missing. On Debian/Ubuntu systems you can install the full toolset with:
 
 ```
-sudo apt install bash coreutils pv xz-utils pixz pigz pbzip2 parallel p7zip-full unzip zstd fzf
+sudo apt install bash coreutils pv xz-utils pixz pigz pbzip2 parallel p7zip-full unzip unrar zstd fzf
 ```
 
 ## Optional tools
@@ -89,24 +90,24 @@ Use `--ext EXT` (repeatable, accepts comma-separated values) to provide your own
 extension list. The first `--ext` invocation replaces the defaults; subsequent
 ones append.
 
-## Archive inspection (7z / tar / zip)
+## Archive inspection (7z / rar / tar / zip)
 
 Run `./analyze-archive.sh ARCHIVE` to compute the SHA-256 of every entry inside a
-7z, tar (including `.tar.gz/.tgz/.taz`, `.tar.bz2/.tbz/.tbz2`, `.tar.xz/.txz/.tlz`,
+7z, rar, tar (including `.tar.gz/.tgz/.taz`, `.tar.bz2/.tbz/.tbz2`, `.tar.xz/.txz/.tlz`,
 `.tar.zst/.tzst`), or zip file without extracting it to disk. Each digest is
 streamed to stdout for live progress and also written to `ARCHIVE.sha256`, which
 is sorted by path before being saved; override the destination with
 `--output FILE`. Add `--quiet` to suppress the progress logs if desired.
 Existing manifests are skipped unless `--overwrite` is supplied, and empty
 archives do not leave behind an empty output file. The script automatically
-chooses `7z`/`7zr`, detects tar compression, and uses the parallel decompressors
+chooses `7z`/`7zr`, `unrar`, detects tar compression, and uses the parallel decompressors
 `pigz`, `pbzip2`, `pixz`, or `pzstd` where appropriate.
 
 When you need to analyze every archive within a directory tree, pair the script
 with GNU `parallel`:
 
 ```(bash)
-find . -type f \( -name '*.tar*' -o -name '*.7z' -o -name '*.zip' \) -print0 |
+find . -type f \( -name '*.tar*' -o -name '*.7z' -o -name '*.zip' -o -name '*.rar' \) -print0 |
   parallel -0 -j8 --eta ./analyze-archive.sh {}
 ```
 

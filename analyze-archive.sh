@@ -27,7 +27,7 @@ Usage:
   analyze-archive.sh [options] ARCHIVE
 
 Description:
-  Streams every regular file contained in the provided archive (7z, tar, or
+  Streams every regular file contained in the provided archive (7z, rar, tar, or
   zip), computes its SHA-256 digest without writing the extracted data to disk,
   and saves the list of hashes to an output file sorted by path.
 
@@ -175,11 +175,30 @@ list_archive_files_zip() {
   rm -f "$listing_tmp"
 }
 
+list_archive_files_rar() {
+  local archive="$1" entry
+  local listing_tmp
+  listing_tmp="$(mktemp)"
+  if ! unrar lb -- "$archive" >"$listing_tmp" 2>&1; then
+    cat "$listing_tmp" >&2
+    rm -f "$listing_tmp"
+    die "Failed to list rar entries for $archive"
+  fi
+
+  while IFS= read -r entry; do
+    [[ -z "$entry" ]] && continue
+    [[ "$entry" == */ ]] && continue
+    printf '%s\0' "$entry"
+  done <"$listing_tmp"
+  rm -f "$listing_tmp"
+}
+
 list_archive_files() {
   case "$ARCHIVE_TYPE" in
     7z) list_archive_files_7z "$ARCHIVE" ;;
     tar|tar.gz|tar.xz|tar.bz2) list_archive_files_tar "$ARCHIVE" ;;
     zip) list_archive_files_zip "$ARCHIVE" ;;
+    rar) list_archive_files_rar "$ARCHIVE" ;;
     *)
       die "Unsupported archive type for $ARCHIVE"
       ;;
@@ -197,6 +216,9 @@ stream_entry() {
       ;;
     zip)
       unzip -p -- "$archive" "$entry"
+      ;;
+    rar)
+      unrar p -idq -- "$archive" "$entry"
       ;;
     *)
       die "Unsupported archive type for streaming: $ARCHIVE_TYPE"
@@ -283,6 +305,9 @@ fi
 case "$ARCHIVE_TYPE" in
   zip)
     require_cmd unzip
+    ;;
+  rar)
+    require_cmd unrar
     ;;
   tar|tar.gz|tar.xz|tar.bz2)
     require_cmd tar

@@ -24,7 +24,7 @@ ZSTD_LEVEL="$DEFAULT_ZSTD_LEVEL"
 PZSTD_LEVEL="$DEFAULT_PZSTD_LEVEL"
 
 QUIET=0
-EXTENSIONS=(tar sql txt csv ibd xlsx docx)
+EXTENSIONS=(tar sql txt csv ibd xlsx docx log)
 EXTENSIONS_CUSTOMIZED=0
 
 usage() {

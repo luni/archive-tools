@@ -75,6 +75,9 @@ detect_archive_type() {
     *.zip)
       printf 'zip'
       ;;
+    *.rar)
+      printf 'rar'
+      ;;
     *)
       printf 'unknown'
       ;;
@@ -109,7 +112,7 @@ strip_archive_suffixes() {
       *.tgz|*.txz|*.tbz|*.tbz2|*.tzst|*.tlz|*.taz)
         name="${name%.*}"
         ;;
-      *.7z|*.zip)
+      *.7z|*.zip|*.rar)
         name="${name%.*}"
         ;;
       *)
