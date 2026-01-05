@@ -277,7 +277,7 @@ compress_big_seq() {
   [[ -n "$SHA1_FILE" ]] && sha1_tmp="$(mktemp)"
   [[ -n "$SHA256_FILE" ]] && sha256_tmp="$(mktemp)"
 
-  local -a read_cmd=(pv -ptebar -- "$f")
+  local -a read_cmd=(pv -ptebar -N "$f" -- "$f")
   local -a compress_cmd=()
 
   log "big(${BIG_COMPRESSOR}): $f -> $out"
