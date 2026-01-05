@@ -9,6 +9,7 @@ trap cleanup_tmpdirs EXIT
 require_cmd python3
 require_cmd xz
 require_cmd zstd
+require_cmd 7z
 
 run_single_decompress_test() {
   local remove_flag="$1" label="$2"
@@ -141,10 +142,17 @@ _run_comprehensive_magic_detection_test() {
     "tar:xz:tar"
     "tar:bz2:tar"
     "tar:zst:tar"
+    "tar:zip:tar"
+    "tar:rar:tar"
+    "tar:7z:tar"
     "gz:bz2:gz"
     "xz:gz:xz"
     "bz2:xz:bz2"
     "zst:bz2:zst"
+    "zip:gz:zip"
+    "zip:xz:zip"
+    "rar:gz:rar"
+    "7z:bz2:7z"
   )
 
   for scenario in "${test_scenarios[@]}"; do
@@ -170,6 +178,29 @@ _run_comprehensive_magic_detection_test() {
         esac
         rm -f "$tmpdir/test_$actual_format.txt"
         original_file="$tmpdir/test_$actual_format.$actual_format"
+        ;;
+      zip)
+        local zip_input="$tmpdir/test_${actual_format}_content.txt"
+        echo "$test_content" >"$zip_input"
+        python3 - "$tmpdir/test_$actual_format.zip" "$zip_input" <<'PY'
+import sys, zipfile
+zip_path, input_path = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(zip_path, 'w') as zf:
+    zf.write(input_path, arcname='file.txt')
+PY
+        rm -f "$zip_input"
+        original_file="$tmpdir/test_$actual_format.zip"
+        ;;
+      7z)
+        local seven_input="$tmpdir/test_${actual_format}_content.txt"
+        echo "$test_content" >"$seven_input"
+        7z a -bd -y "$tmpdir/test_$actual_format.7z" "$seven_input" >/dev/null
+        rm -f "$seven_input"
+        original_file="$tmpdir/test_$actual_format.7z"
+        ;;
+      rar)
+        original_file="$tmpdir/test_$actual_format.rar"
+        printf 'Rar!\x1A\x07\x00\x00\x00\x00\x00' >"$original_file"
         ;;
     esac
 

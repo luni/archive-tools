@@ -10,6 +10,7 @@ QUIET=0
 REMOVE_COMPRESSED=0
 CUSTOM_COMPRESSORS=0
 SUPPORTED_COMPRESSORS=(pixz pzstd pigz pbzip2)
+MAGIC_ONLY_EXTENSIONS=(zip rar 7z)
 
 usage() {
   cat >&2 <<'EOF'
@@ -107,6 +108,10 @@ for comp in "${SUPPORTED_COMPRESSORS[@]}"; do
   done
 done
 
+for ext in "${MAGIC_ONLY_EXTENSIONS[@]}"; do
+  add_predicate "$ext"
+done
+
 if [[ "${#ext_pred[@]}" -eq 0 ]]; then
   log "No file patterns configured; exiting."
   exit 0
@@ -137,7 +142,19 @@ decompress_file() {
     *.gz)   compressor="pigz"; out="${f%.gz}" ;;
     *.tbz|*.tbz2) compressor="pbzip2"; out="${f%.*}.tar" ;;
     *.bz2)  compressor="pbzip2"; out="${f%.bz2}" ;;
-    *) log "skip (unknown extension): $f"; return 0 ;;
+    *)
+      local actual_ext expected_ext
+      actual_ext="$(detect_actual_format "$f")"
+      expected_ext="$(get_expected_extension "$f")"
+      if [[ "$actual_ext" == "tar" ]]; then
+        log "skip (already uncompressed tar archive): $f"
+      elif [[ "$actual_ext" == "$expected_ext" && "$actual_ext" =~ ^(zip|rar|7z)$ ]]; then
+        log "skip (unsupported archive format: $actual_ext): $f"
+      else
+        log "skip (unknown extension): $f"
+      fi
+      return 0
+      ;;
   esac
 
   if ! compressor_enabled "$compressor"; then

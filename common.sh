@@ -119,6 +119,15 @@ detect_actual_format() {
     *"compress'd data"*|*application/x-compress*)
       echo "Z"
       ;;
+    *"Zip archive data"*|*application/zip*)
+      echo "zip"
+      ;;
+    *"RAR archive data"*|*application/x-rar*)
+      echo "rar"
+      ;;
+    *"7-zip archive data"*|*application/x-7z-compressed*)
+      echo "7z"
+      ;;
     *)
       echo "unknown"
       ;;
@@ -136,6 +145,9 @@ get_expected_extension() {
     *.txz) echo "xz" ;;
     *.tzst) echo "zst" ;;
     *.tbz|*.tbz2) echo "bz2" ;;
+    *.zip) echo "zip" ;;
+    *.rar) echo "rar" ;;
+    *.7z) echo "7z" ;;
     *) echo "unknown" ;;
   esac
 }
@@ -154,13 +166,13 @@ rename_misnamed_file() {
   if [[ "$actual_ext" == "tar" ]]; then
     # Handle compound extensions like .tar.gz, .tgz, etc.
     case "$file" in
-      *.tar.gz|*.tar.xz|*.tar.bz2|*.tar.zst)
+      *.tar.gz|*.tar.xz|*.tar.bz2|*.tar.zst|*.tar.zip|*.tar.rar|*.tar.7z)
         new_name="${file%.*.*}.tar"  # Remove both extensions and add .tar
         ;;
       *.tgz|*.txz|*.tbz|*.tbz2|*.tzst)
         new_name="${file%.*}.tar"  # Remove compound extension and add .tar
         ;;
-      *.gz|*.xz|*.bz2|*.zst)
+      *.gz|*.xz|*.bz2|*.zst|*.zip|*.rar|*.7z)
         new_name="${file%.*}.tar"  # Remove compression extension and add .tar
         ;;
       *)

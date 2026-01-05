@@ -147,6 +147,18 @@ fsize() {
   stat -c '%s' -- "$1" 2>/dev/null || stat -f '%z' -- "$1"
 }
 
+skip_if_already_compressed() {
+  local file="$1" actual
+  actual="$(detect_actual_format "$file")"
+  case "$actual" in
+    gz|bz2|xz|zst)
+      log "skip (already compressed: ${actual}): $file"
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 out_name() {
   local f="$1" algo="$2"
   case "$algo" in
@@ -165,6 +177,9 @@ out_name() {
 
 compress_small() {
   local f="$1" out tmp sha1_line="" sha256_line=""
+  if skip_if_already_compressed "$f"; then
+    return 0
+  fi
   out="$(out_name "$f" "$SMALL_COMPRESSOR")"
   [[ -e "$out" ]] && { log "skip: $f"; return 0; }
 
@@ -204,6 +219,9 @@ compress_small() {
 
 compress_big_seq() {
   local f="$1" out tmp sha1_line="" sha256_line=""
+  if skip_if_already_compressed "$f"; then
+    return 0
+  fi
   out="$(out_name "$f" "$BIG_COMPRESSOR")"
   [[ -e "$out" ]] && { log "skip: $f"; return 0; }
 
