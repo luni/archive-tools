@@ -26,27 +26,27 @@ OUTPUT_FILE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -q|--quiet)
-      QUIET=1
-      shift
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    -*)
-      die "Unknown option: $1"
-      ;;
-    *)
-      if [[ -z "$DIRECTORY" ]]; then
-        DIRECTORY="$1"
-      elif [[ -z "$OUTPUT_FILE" ]]; then
-        OUTPUT_FILE="$1"
-      else
-        die "Too many arguments"
-      fi
-      shift
-      ;;
+  -q | --quiet)
+    QUIET=1
+    shift
+    ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  -*)
+    die "Unknown option: $1"
+    ;;
+  *)
+    if [[ -z "$DIRECTORY" ]]; then
+      DIRECTORY="$1"
+    elif [[ -z "$OUTPUT_FILE" ]]; then
+      OUTPUT_FILE="$1"
+    else
+      die "Too many arguments"
+    fi
+    shift
+    ;;
   esac
 done
 

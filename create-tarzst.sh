@@ -40,12 +40,6 @@ Options:
 EOF
 }
 
-default_output_path() {
-  local dir="$1" base
-  base="$(basename -- "$dir")"
-  printf '%s.tar.zst\n' "$base"
-}
-
 write_sha256_manifest() {
   local root="$1" dest="$2" file rel hash
   [[ -z "$dest" ]] && return 0
@@ -61,61 +55,61 @@ write_sha256_manifest() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -o|--output)
-      [[ $# -lt 2 ]] && die "Missing value for $1"
-      OUTPUT="$2"
-      shift 2
-      ;;
-    --pzstd-level)
-      [[ $# -lt 2 ]] && die "Missing value for $1"
-      PZSTD_LEVEL="$2"
-      shift 2
-      ;;
-    --sha256)
-      SHA256_ENABLED=1
+  -o | --output)
+    [[ $# -lt 2 ]] && die "Missing value for $1"
+    OUTPUT="$2"
+    shift 2
+    ;;
+  --pzstd-level)
+    [[ $# -lt 2 ]] && die "Missing value for $1"
+    PZSTD_LEVEL="$2"
+    shift 2
+    ;;
+  --sha256)
+    SHA256_ENABLED=1
+    shift
+    ;;
+  --sha256-file)
+    [[ $# -lt 2 ]] && die "Missing value for $1"
+    SHA256_ENABLED=1
+    SHA256_FILE="$2"
+    shift 2
+    ;;
+  --sha256-append)
+    SHA256_APPEND=1
+    shift
+    ;;
+  -r | --remove-source)
+    REMOVE_SOURCE=1
+    shift
+    ;;
+  -f | --force)
+    FORCE=1
+    shift
+    ;;
+  -q | --quiet)
+    QUIET=1
+    shift
+    ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  --)
+    shift
+    break
+    ;;
+  -*)
+    die "Unknown option: $1"
+    ;;
+  *)
+    if [[ -z "$SOURCE_DIR" ]]; then
+      SOURCE_DIR="$1"
       shift
-      ;;
-    --sha256-file)
-      [[ $# -lt 2 ]] && die "Missing value for $1"
-      SHA256_ENABLED=1
-      SHA256_FILE="$2"
-      shift 2
-      ;;
-    --sha256-append)
-      SHA256_APPEND=1
-      shift
-      ;;
-    -r|--remove-source)
-      REMOVE_SOURCE=1
-      shift
-      ;;
-    -f|--force)
-      FORCE=1
-      shift
-      ;;
-    -q|--quiet)
-      QUIET=1
-      shift
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    --)
-      shift
-      break
-      ;;
-    -*)
-      die "Unknown option: $1"
-      ;;
-    *)
-      if [[ -z "$SOURCE_DIR" ]]; then
-        SOURCE_DIR="$1"
-        shift
-      else
-        die "Only one directory can be compressed at a time."
-      fi
-      ;;
+    else
+      die "Only one directory can be compressed at a time."
+    fi
+    ;;
   esac
 done
 
@@ -127,7 +121,7 @@ fi
 [[ -d "$SOURCE_DIR" ]] || die "Directory not found: $SOURCE_DIR"
 
 if [[ -z "$OUTPUT" ]]; then
-  OUTPUT="$(default_output_path "$SOURCE_DIR")"
+  OUTPUT="$(basename -- "$SOURCE_DIR").tar.zst"
 fi
 
 if [[ -e "$OUTPUT" && "$FORCE" -ne 1 ]]; then

@@ -9,13 +9,6 @@ tmp_manifest=""
 tmp_tar_entries=""
 tmp_tar_command=""
 
-validate_split_archive() {
-  local archive="$1"
-
-  if is_split_archive "$archive" && ! is_first_chunk "$archive"; then
-    die "Failed to list entries for $archive"
-  fi
-}
 
 cleanup() {
   if [[ -n "$tmp_manifest" && -f "$tmp_manifest" ]]; then
@@ -250,6 +243,8 @@ list_archive_files() {
   esac
 }
 
+
+
 stream_entry() {
   local archive="$1" entry="$2"
   case "$ARCHIVE_TYPE" in
@@ -374,7 +369,9 @@ if [[ ! -f "$ARCHIVE" ]]; then
   die "Archive not found: $ARCHIVE"
 fi
 
-validate_split_archive "$ARCHIVE"
+if is_split_archive "$ARCHIVE" && ! is_first_chunk "$ARCHIVE"; then
+  die "Failed to list entries for $ARCHIVE"
+fi
 
 ARCHIVE_TYPE="$(detect_archive_type "$ARCHIVE")"
 if [[ "$ARCHIVE_TYPE" == "unknown" ]]; then

@@ -43,44 +43,59 @@ add_compressors() {
     part="${part,,}"
     [[ -z "$part" ]] && continue
     case "$part" in
-      pixz|pzstd|pigz|pbzip2)
-        SUPPORTED_COMPRESSORS+=("$part")
-        ;;
-      xz)
-        SUPPORTED_COMPRESSORS+=("pixz")
-        ;;
-      zstd|pzstd)
-        SUPPORTED_COMPRESSORS+=("pzstd")
-        ;;
-      gzip|pigz)
-        SUPPORTED_COMPRESSORS+=("pigz")
-        ;;
-      bzip2|pbzip2)
-        SUPPORTED_COMPRESSORS+=("pbzip2")
-        ;;
-      *)
-        die "Unsupported compressor: $part"
-        ;;
+    pixz | pzstd | pigz | pbzip2)
+      SUPPORTED_COMPRESSORS+=("$part")
+      ;;
+    xz)
+      SUPPORTED_COMPRESSORS+=("pixz")
+      ;;
+    zstd | pzstd)
+      SUPPORTED_COMPRESSORS+=("pzstd")
+      ;;
+    gzip | pigz)
+      SUPPORTED_COMPRESSORS+=("pigz")
+      ;;
+    bzip2 | pbzip2)
+      SUPPORTED_COMPRESSORS+=("pbzip2")
+      ;;
+    *)
+      die "Unsupported compressor: $part"
+      ;;
     esac
   done
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -d|--dir) SCAN_DIR="$2"; shift 2 ;;
-    -c|--compressor)
-      if [[ "$CUSTOM_COMPRESSORS" -eq 0 ]]; then
-        SUPPORTED_COMPRESSORS=()
-        CUSTOM_COMPRESSORS=1
-      fi
-      add_compressors "$2"
-      shift 2
-      ;;
-    -r|--remove-source|--remove-compressed) REMOVE_COMPRESSED=1; shift ;;
-    -q|--quiet) QUIET=1; shift ;;
-    -h|--help) usage; exit 0 ;;
-    --) shift; break ;;
-    *) die "Unknown option: $1" ;;
+  -d | --dir)
+    SCAN_DIR="$2"
+    shift 2
+    ;;
+  -c | --compressor)
+    if [[ "$CUSTOM_COMPRESSORS" -eq 0 ]]; then
+      SUPPORTED_COMPRESSORS=()
+      CUSTOM_COMPRESSORS=1
+    fi
+    add_compressors "$2"
+    shift 2
+    ;;
+  -r | --remove-source | --remove-compressed)
+    REMOVE_COMPRESSED=1
+    shift
+    ;;
+  -q | --quiet)
+    QUIET=1
+    shift
+    ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  --)
+    shift
+    break
+    ;;
+  *) die "Unknown option: $1" ;;
   esac
 done
 
@@ -91,7 +106,6 @@ fi
 for comp in "${SUPPORTED_COMPRESSORS[@]}"; do
   command -v "$comp" >/dev/null 2>&1 || die "Required tool '$comp' is not on PATH."
 done
-
 
 ext_pred=()
 add_predicate() {
@@ -149,27 +163,51 @@ decompress_file() {
   fi
 
   case "$f" in
-    *.txz)  compressor="pixz"; out="${f%.txz}.tar" ;;
-    *.xz)   compressor="pixz"; out="${f%.xz}" ;;
-    *.tzst) compressor="pzstd"; out="${f%.tzst}.tar" ;;
-    *.zst)  compressor="pzstd"; out="${f%.zst}" ;;
-    *.tgz)  compressor="pigz"; out="${f%.tgz}.tar" ;;
-    *.gz)   compressor="pigz"; out="${f%.gz}" ;;
-    *.tbz|*.tbz2) compressor="pbzip2"; out="${f%.*}.tar" ;;
-    *.bz2)  compressor="pbzip2"; out="${f%.bz2}" ;;
-    *)
-      local actual_ext expected_ext
-      actual_ext="$(detect_actual_format "$f")"
-      expected_ext="$(get_expected_extension "$f")"
-      if [[ "$actual_ext" == "tar" ]]; then
-        log "skip (already uncompressed tar archive): $f"
-      elif [[ "$actual_ext" == "$expected_ext" && "$actual_ext" =~ ^(zip|rar|7z)$ ]]; then
-        log "skip (unsupported archive format: $actual_ext): $f"
-      else
-        log "skip (unknown extension): $f"
-      fi
-      return 0
-      ;;
+  *.txz)
+    compressor="pixz"
+    out="${f%.txz}.tar"
+    ;;
+  *.xz)
+    compressor="pixz"
+    out="${f%.xz}"
+    ;;
+  *.tzst)
+    compressor="pzstd"
+    out="${f%.tzst}.tar"
+    ;;
+  *.zst)
+    compressor="pzstd"
+    out="${f%.zst}"
+    ;;
+  *.tgz)
+    compressor="pigz"
+    out="${f%.tgz}.tar"
+    ;;
+  *.gz)
+    compressor="pigz"
+    out="${f%.gz}"
+    ;;
+  *.tbz | *.tbz2)
+    compressor="pbzip2"
+    out="${f%.*}.tar"
+    ;;
+  *.bz2)
+    compressor="pbzip2"
+    out="${f%.bz2}"
+    ;;
+  *)
+    local actual_ext expected_ext
+    actual_ext="$(detect_actual_format "$f")"
+    expected_ext="$(get_expected_extension "$f")"
+    if [[ "$actual_ext" == "tar" ]]; then
+      log "skip (already uncompressed tar archive): $f"
+    elif [[ "$actual_ext" == "$expected_ext" && "$actual_ext" =~ ^(zip|rar|7z)$ ]]; then
+      log "skip (unsupported archive format: $actual_ext): $f"
+    else
+      log "skip (unknown extension): $f"
+    fi
+    return 0
+    ;;
   esac
 
   if ! compressor_enabled "$compressor"; then
@@ -187,21 +225,33 @@ decompress_file() {
 
   log "decompress(${compressor}): $f -> $out"
   case "$compressor" in
-    pixz)
-      if pixz -dk "$f" "$tmp"; then :; else rm -f -- "$tmp"; return 1; fi
-      ;;
-    pzstd)
-      if pzstd -dqo "$tmp" "$f"; then :; else rm -f -- "$tmp"; return 1; fi
-      ;;
-    pigz)
-      if pigz -dck "$f" >"$tmp"; then :; else rm -f -- "$tmp"; return 1; fi
-      ;;
-    pbzip2)
-      if pbzip2 -dck "$f" >"$tmp"; then :; else rm -f -- "$tmp"; return 1; fi
-      ;;
+  pixz)
+    if pixz -dk "$f" "$tmp"; then :; else
+      rm -f -- "$tmp"
+      return 1
+    fi
+    ;;
+  pzstd)
+    if pzstd -dqo "$tmp" "$f"; then :; else
+      rm -f -- "$tmp"
+      return 1
+    fi
+    ;;
+  pigz)
+    if pigz -dck "$f" >"$tmp"; then :; else
+      rm -f -- "$tmp"
+      return 1
+    fi
+    ;;
+  pbzip2)
+    if pbzip2 -dck "$f" >"$tmp"; then :; else
+      rm -f -- "$tmp"
+      return 1
+    fi
+    ;;
   esac
 
-  restore_mtime "$f" "$tmp"
+  touch -r "$f" "$tmp"
   mv -f -- "$tmp" "$out"
 
   if [[ "$REMOVE_COMPRESSED" -eq 1 ]]; then

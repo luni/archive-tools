@@ -63,7 +63,7 @@ collect_related_basename_files() {
   shopt -s nullglob dotglob
   for candidate in "$base_no_sha".* "$dir/$stem"; do
     [[ -f "$candidate" ]] || continue
-    if [[ "$candidate" == "$manifest" || ( -n "${archive:-}" && "$candidate" == "$archive" ) ]]; then
+    if [[ "$candidate" == "$manifest" || (-n "${archive:-}" && "$candidate" == "$archive") ]]; then
       continue
     fi
     seen["$candidate"]=1
@@ -94,7 +94,7 @@ gather_delete_targets() {
 
   local -a related_files=()
   collect_related_basename_files "$manifest" "${archive:-}" related_files
-  if (( ${#related_files[@]} > 0 )); then
+  if ((${#related_files[@]} > 0)); then
     __out_ref+=("${related_files[@]}")
   fi
 }
@@ -105,7 +105,7 @@ format_manifest_choice_label() {
   gather_delete_targets "$manifest" targets
 
   local label="$manifest"
-  if (( ${#targets[@]} > 1 )); then
+  if ((${#targets[@]} > 1)); then
     local -a extras=("${targets[@]:1}")
     label+=" (also removes: "
     label+="$(printf '%s, ' "${extras[@]}")"
@@ -123,7 +123,7 @@ interactive_select_items() {
   local -a options=("$@")
   __result_ref=()
 
-  if (( ${#options[@]} == 0 )); then
+  if ((${#options[@]} == 0)); then
     return 1
   fi
 
@@ -132,7 +132,7 @@ interactive_select_items() {
     if ! selection="$(
       printf '%s\n' "${options[@]}" |
         fzf --multi --prompt "$prompt" \
-            --header=$'TAB to toggle selections, ENTER to confirm, ESC to cancel'
+          --header=$'TAB to toggle selections, ENTER to confirm, ESC to cancel'
     )"; then
       return 1
     fi
@@ -167,7 +167,7 @@ interactive_select_items() {
         break
       fi
       local idx=$((raw - 1))
-      if (( idx < 0 || idx >= ${#options[@]} )); then
+      if ((idx < 0 || idx >= ${#options[@]})); then
         invalid=1
         break
       fi
@@ -176,7 +176,7 @@ interactive_select_items() {
         seen_index[$idx]=1
       fi
     done
-    if (( invalid || ${#selected_unique[@]} == 0 )); then
+    if ((invalid || ${#selected_unique[@]} == 0)); then
       printf 'Invalid selection. Please try again.\n'
       continue
     fi
@@ -208,7 +208,7 @@ delete_redundant_manifest() {
 
 record_entry() {
   local hash="$1" manifest="$2" entry="$3"
-  HASH_COUNTS["$hash"]=$(( ${HASH_COUNTS["$hash"]:-0} + 1 ))
+  HASH_COUNTS["$hash"]=$((${HASH_COUNTS["$hash"]:-0} + 1))
   if [[ -v HASH_LOCATIONS["$hash"] ]]; then
     HASH_LOCATIONS["$hash"]+=$'\n'"$manifest$SEP$entry"
   else
@@ -217,7 +217,7 @@ record_entry() {
   local combination="$hash$GROUP_SEP$manifest"
   if [[ ! -v HASH_MANIFEST_SEEN["$combination"] ]]; then
     HASH_MANIFEST_SEEN["$combination"]=1
-    HASH_UNIQUE_MANIFEST_COUNT["$hash"]=$(( ${HASH_UNIQUE_MANIFEST_COUNT["$hash"]:-0} + 1 ))
+    HASH_UNIQUE_MANIFEST_COUNT["$hash"]=$((${HASH_UNIQUE_MANIFEST_COUNT["$hash"]:-0} + 1))
   fi
 }
 
@@ -249,7 +249,7 @@ process_manifest() {
     printf 'note: %s contained no recognizable entries\n' "$manifest" >&2
   fi
 
-  if (( IDENTICAL_ONLY )); then
+  if ((IDENTICAL_ONLY)); then
     local signature
     if ((${#manifest_pairs[@]} > 0)); then
       signature="$(printf '%s\n' "${manifest_pairs[@]}" | LC_ALL=C sort | sha256sum | awk '{print $1}')"
@@ -267,37 +267,37 @@ process_manifest() {
 dirs=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -A|--identical-archives)
-      IDENTICAL_ONLY=1
-      shift
-      ;;
-    -D|--delete-identical)
-      DELETE_IDENTICAL=1
-      shift
-      ;;
-    -S|--skip-intra-manifest)
-      SKIP_INTRA_MANIFEST=1
-      shift
-      ;;
-    -y|--yes)
-      AUTO_CONFIRM=1
-      shift
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    --)
-      shift
-      break
-      ;;
-    -*)
-      die "Unknown option: $1"
-      ;;
-    *)
-      dirs+=("$1")
-      shift
-      ;;
+  -A | --identical-archives)
+    IDENTICAL_ONLY=1
+    shift
+    ;;
+  -D | --delete-identical)
+    DELETE_IDENTICAL=1
+    shift
+    ;;
+  -S | --skip-intra-manifest)
+    SKIP_INTRA_MANIFEST=1
+    shift
+    ;;
+  -y | --yes)
+    AUTO_CONFIRM=1
+    shift
+    ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  --)
+    shift
+    break
+    ;;
+  -*)
+    die "Unknown option: $1"
+    ;;
+  *)
+    dirs+=("$1")
+    shift
+    ;;
   esac
 done
 
@@ -309,7 +309,7 @@ if [[ "${#dirs[@]}" -eq 0 ]]; then
   dirs=(".")
 fi
 
-if (( DELETE_IDENTICAL && ! IDENTICAL_ONLY )); then
+if ((DELETE_IDENTICAL && !IDENTICAL_ONLY)); then
   die "--delete-identical requires --identical-archives"
 fi
 
@@ -317,7 +317,7 @@ for dir in "${dirs[@]}"; do
   [[ -d "$dir" ]] || die "Directory not found: $dir"
 done
 
-if (( IDENTICAL_ONLY )); then
+if ((IDENTICAL_ONLY)); then
   require_tool sha256sum
 fi
 
@@ -334,7 +334,7 @@ fi
 printf 'Scanned %d manifest(s); %d total entries (%d unique hashes). Skipped %d line(s).\n' \
   "$manifests_scanned" "$entries_recorded" "${#HASH_COUNTS[@]}" "$lines_skipped"
 
-if (( IDENTICAL_ONLY )); then
+if ((IDENTICAL_ONLY)); then
   identical_groups_found=0
   for signature in "${!SIGNATURE_MANIFESTS[@]}"; do
     IFS=$GROUP_SEP read -r -a manifests_in_group <<<"${SIGNATURE_MANIFESTS["$signature"]}"
@@ -346,9 +346,9 @@ if (( IDENTICAL_ONLY )); then
       for manifest in "${manifests_in_group[@]}"; do
         printf '  - %s\n' "$manifest"
       done
-      if (( DELETE_IDENTICAL )); then
+      if ((DELETE_IDENTICAL)); then
         declare -a manifests_to_delete=()
-        if (( AUTO_CONFIRM )); then
+        if ((AUTO_CONFIRM)); then
           manifests_to_delete=("${manifests_in_group[@]:1}")
           printf 'Auto mode: keeping %s and deleting %d additional archive(s).\n' \
             "${manifests_in_group[0]}" "${#manifests_to_delete[@]}"
@@ -374,7 +374,7 @@ if (( IDENTICAL_ONLY )); then
             fi
             manifests_to_delete+=("$manifest")
           done
-          if (( ${#manifests_to_delete[@]} >= ${#manifests_in_group[@]} )); then
+          if ((${#manifests_to_delete[@]} >= ${#manifests_in_group[@]})); then
             printf 'Cannot delete every archive in a group; skipping this group.\n'
             continue
           fi
@@ -386,9 +386,9 @@ if (( IDENTICAL_ONLY )); then
     fi
   done
 
-  if (( identical_groups_found == 0 )); then
+  if ((identical_groups_found == 0)); then
     printf 'No archives with identical contents were found.\n'
-  elif (( DELETE_IDENTICAL )); then
+  elif ((DELETE_IDENTICAL)); then
     printf '\nDeletion pass complete.\n'
   fi
   exit 0
@@ -396,12 +396,12 @@ fi
 
 duplicate_hashes=()
 for hash in "${!HASH_COUNTS[@]}"; do
-  if (( SKIP_INTRA_MANIFEST )); then
-    if (( ${HASH_UNIQUE_MANIFEST_COUNT["$hash"]:-0} > 1 )); then
+  if ((SKIP_INTRA_MANIFEST)); then
+    if ((${HASH_UNIQUE_MANIFEST_COUNT["$hash"]:-0} > 1)); then
       duplicate_hashes+=("$hash")
     fi
   else
-    if (( HASH_COUNTS["$hash"] > 1 )); then
+    if ((HASH_COUNTS["$hash"] > 1)); then
       duplicate_hashes+=("$hash")
     fi
   fi
@@ -417,14 +417,14 @@ IFS=$'\n' read -r -d '' -a duplicate_hashes < <(printf '%s\n' "${duplicate_hashe
 
 for hash in "${duplicate_hashes[@]}"; do
   display_count="${HASH_COUNTS["$hash"]}"
-  if (( SKIP_INTRA_MANIFEST )); then
+  if ((SKIP_INTRA_MANIFEST)); then
     display_count="${HASH_UNIQUE_MANIFEST_COUNT["$hash"]:-0}"
   fi
   printf '\nSHA256 %s (%d occurrences):\n' "$hash" "$display_count"
   printed_manifest_list=""
   while IFS= read -r location || [[ -n "$location" ]]; do
     IFS=$SEP read -r manifest entry <<<"$location"
-    if (( SKIP_INTRA_MANIFEST )); then
+    if ((SKIP_INTRA_MANIFEST)); then
       if [[ ":$printed_manifest_list:" == *":$manifest:"* ]]; then
         continue
       fi

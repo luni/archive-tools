@@ -53,7 +53,6 @@ Options:
 EOF
 }
 
-
 tar_list_entries() {
   local archive="$1" dest="$2" compression="$3"
 
@@ -118,14 +117,14 @@ EOF
   export TMP_MANIFEST="$tmp_manifest"
 
   case "$compression" in
-    gz|bz2|xz)
-      local decompress_cmd
-      decompress_cmd="$(get_decompression_command "$compression")"
-      cat "$archive" | $decompress_cmd | tar --null --files-from="$tmp_files" --to-command="$tmp_command" -xf - 2>/dev/null || true
-      ;;
-    none)
-      tar --null --files-from="$tmp_files" --to-command="$tmp_command" -xf "$archive" 2>/dev/null || true
-      ;;
+  gz | bz2 | xz)
+    local decompress_cmd
+    decompress_cmd="$(get_decompression_command "$compression")"
+    cat "$archive" | $decompress_cmd | tar --null --files-from="$tmp_files" --to-command="$tmp_command" -xf - 2>/dev/null || true
+    ;;
+  none)
+    tar --null --files-from="$tmp_files" --to-command="$tmp_command" -xf "$archive" 2>/dev/null || true
+    ;;
   esac
 
   LC_ALL=C sort -t $'\t' -k2,2 "$tmp_manifest" | awk -F $'\t' '{printf "%s  %s\n", $1, $2}' >>"$dest"
@@ -133,27 +132,26 @@ EOF
   rm -f "$tmp_files" "$tmp_command" "$tmp_manifest"
 }
 
-
 setup_stream_input() {
   case "$ARCHIVE_TYPE" in
-    tar.gz)
-      require_cmd pigz
-      INPUT_STREAM_CMD=(pigz -dc -- "$ARCHIVE")
-      INPUT_STREAM_DESC="pigz -dc"
-      ;;
-    tar.xz)
-      require_cmd pixz
-      INPUT_STREAM_CMD=(pixz -k -d -- "$ARCHIVE" /dev/stdout)
-      INPUT_STREAM_DESC="pixz -d"
-      ;;
-    tar.bz2)
-      require_cmd pbzip2
-      INPUT_STREAM_CMD=(pbzip2 -dc -- "$ARCHIVE")
-      INPUT_STREAM_DESC="pbzip2 -dc"
-      ;;
-    *)
-      die "Streaming conversion is not supported for archive type '$ARCHIVE_TYPE'"
-      ;;
+  tar.gz)
+    require_cmd pigz
+    INPUT_STREAM_CMD=(pigz -dc -- "$ARCHIVE")
+    INPUT_STREAM_DESC="pigz -dc"
+    ;;
+  tar.xz)
+    require_cmd pixz
+    INPUT_STREAM_CMD=(pixz -k -d -- "$ARCHIVE" /dev/stdout)
+    INPUT_STREAM_DESC="pixz -d"
+    ;;
+  tar.bz2)
+    require_cmd pbzip2
+    INPUT_STREAM_CMD=(pbzip2 -dc -- "$ARCHIVE")
+    INPUT_STREAM_DESC="pbzip2 -dc"
+    ;;
+  *)
+    die "Streaming conversion is not supported for archive type '$ARCHIVE_TYPE'"
+    ;;
   esac
 }
 
@@ -173,70 +171,70 @@ trap cleanup EXIT INT TERM
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -o|--output)
-      [[ $# -lt 2 ]] && die "Missing value for $1"
-      OUTPUT="$2"
-      shift 2
-      ;;
-    --pzstd-level)
-      [[ $# -lt 2 ]] && die "Missing value for $1"
-      PZSTD_LEVEL="$2"
-      shift 2
-      ;;
-    --temp-dir)
-      [[ $# -lt 2 ]] && die "Missing value for $1"
-      TEMP_PARENT="$2"
-      shift 2
-      ;;
-    --sha256)
-      SHA256_ENABLED=1
-      shift
-      ;;
-    --sha256-file)
-      [[ $# -lt 2 ]] && die "Missing value for $1"
-      SHA256_ENABLED=1
-      SHA256_FILE="$2"
-      shift 2
-      ;;
-    --sha256-append)
-      SHA256_APPEND=1
-      shift
-      ;;
-    -r|--remove-source)
-      REMOVE_SOURCE=1
-      shift
-      ;;
-    -f|--force)
-      FORCE=1
-      shift
-      ;;
-    -q|--quiet)
-      QUIET=1
-      shift
-      ;;
-    -k|--keep-temp)
-      KEEP_WORKDIR=1
-      shift
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    --)
-      shift
-      break
-      ;;
-    -*)
-      die "Unknown option: $1"
-      ;;
-    *)
-      if [[ -z "$ARCHIVE" ]]; then
-        ARCHIVE="$1"
-      else
-        die "Only one archive can be converted at a time."
-      fi
-      shift
-      ;;
+  -o | --output)
+    [[ $# -lt 2 ]] && die "Missing value for $1"
+    OUTPUT="$2"
+    shift 2
+    ;;
+  --pzstd-level)
+    [[ $# -lt 2 ]] && die "Missing value for $1"
+    PZSTD_LEVEL="$2"
+    shift 2
+    ;;
+  --temp-dir)
+    [[ $# -lt 2 ]] && die "Missing value for $1"
+    TEMP_PARENT="$2"
+    shift 2
+    ;;
+  --sha256)
+    SHA256_ENABLED=1
+    shift
+    ;;
+  --sha256-file)
+    [[ $# -lt 2 ]] && die "Missing value for $1"
+    SHA256_ENABLED=1
+    SHA256_FILE="$2"
+    shift 2
+    ;;
+  --sha256-append)
+    SHA256_APPEND=1
+    shift
+    ;;
+  -r | --remove-source)
+    REMOVE_SOURCE=1
+    shift
+    ;;
+  -f | --force)
+    FORCE=1
+    shift
+    ;;
+  -q | --quiet)
+    QUIET=1
+    shift
+    ;;
+  -k | --keep-temp)
+    KEEP_WORKDIR=1
+    shift
+    ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  --)
+    shift
+    break
+    ;;
+  -*)
+    die "Unknown option: $1"
+    ;;
+  *)
+    if [[ -z "$ARCHIVE" ]]; then
+      ARCHIVE="$1"
+    else
+      die "Only one archive can be converted at a time."
+    fi
+    shift
+    ;;
   esac
 done
 
@@ -315,11 +313,11 @@ tar_stream() {
 
 if [[ "$SHA256_ENABLED" -eq 1 ]]; then
   case "$ARCHIVE_TYPE" in
-    tar.gz|tar.xz|tar.bz2)
-      TAR_COMPRESSION="$(detect_tar_compression "$ARCHIVE")"
-      log "Computing SHA-256 manifest for tar archive..."
-      write_sha256_manifest_tar "$ARCHIVE" "$SHA256_FILE" "$TAR_COMPRESSION"
-      ;;
+  tar.gz | tar.xz | tar.bz2)
+    TAR_COMPRESSION="$(detect_tar_compression "$ARCHIVE")"
+    log "Computing SHA-256 manifest for tar archive..."
+    write_sha256_manifest_tar "$ARCHIVE" "$SHA256_FILE" "$TAR_COMPRESSION"
+    ;;
   esac
 fi
 
@@ -352,11 +350,11 @@ fi
 
 if [[ "$SHA256_ENABLED" -eq 1 ]]; then
   case "$ARCHIVE_TYPE" in
-    7z|zip)
-      if ! write_sha256_manifest "$WORKDIR" "$SHA256_FILE"; then
-        die "Failed to write SHA256 manifest"
-      fi
-      ;;
+  7z | zip)
+    if ! write_sha256_manifest "$WORKDIR" "$SHA256_FILE"; then
+      die "Failed to write SHA256 manifest"
+    fi
+    ;;
   esac
 fi
 

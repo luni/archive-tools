@@ -13,12 +13,12 @@ SHA256_FILE=""
 SHA256_APPEND=0
 CHECKSUM_DELIM=$'\x1f'
 
-THRESHOLD_BYTES=$((100 * 1024 * 1024))   # 100 MiB
+THRESHOLD_BYTES=$((100 * 1024 * 1024)) # 100 MiB
 SMALL_JOBS=8
 BIG_JOBS=1
 
-SMALL_COMPRESSOR="xz"   # xz | zstd
-BIG_COMPRESSOR="pixz"   # pixz | xz | pzstd | zstd
+SMALL_COMPRESSOR="xz" # xz | zstd
+BIG_COMPRESSOR="pixz" # pixz | xz | pzstd | zstd
 
 XZ_LEVEL="$DEFAULT_XZ_LEVEL"
 ZSTD_LEVEL="$DEFAULT_ZSTD_LEVEL"
@@ -61,11 +61,24 @@ EOF
 parse_size() {
   local s="${1,,}" n unit
   if [[ "$s" =~ ^[0-9]+$ ]]; then
-    echo "$s"; return 0
+    echo "$s"
+    return 0
   fi
-  if [[ "$s" =~ ^([0-9]+)(k|kb|kib)$ ]]; then n="${BASH_REMATCH[1]}"; echo $((n*1024)); return 0; fi
-  if [[ "$s" =~ ^([0-9]+)(m|mb|mib)$ ]]; then n="${BASH_REMATCH[1]}"; echo $((n*1024*1024)); return 0; fi
-  if [[ "$s" =~ ^([0-9]+)(g|gb|gib)$ ]]; then n="${BASH_REMATCH[1]}"; echo $((n*1024*1024*1024)); return 0; fi
+  if [[ "$s" =~ ^([0-9]+)(k|kb|kib)$ ]]; then
+    n="${BASH_REMATCH[1]}"
+    echo $((n * 1024))
+    return 0
+  fi
+  if [[ "$s" =~ ^([0-9]+)(m|mb|mib)$ ]]; then
+    n="${BASH_REMATCH[1]}"
+    echo $((n * 1024 * 1024))
+    return 0
+  fi
+  if [[ "$s" =~ ^([0-9]+)(g|gb|gib)$ ]]; then
+    n="${BASH_REMATCH[1]}"
+    echo $((n * 1024 * 1024 * 1024))
+    return 0
+  fi
   echo "Invalid size: $1" >&2
   exit 2
 }
@@ -83,12 +96,12 @@ emit_checksum_lines() {
 append_checksum_line() {
   local algo="$1" line="$2"
   case "$algo" in
-    sha1)
-      [[ -n "$SHA1_FILE" ]] && printf '%s\n' "$line" >>"$SHA1_FILE"
-      ;;
-    sha256)
-      [[ -n "$SHA256_FILE" ]] && printf '%s\n' "$line" >>"$SHA256_FILE"
-      ;;
+  sha1)
+    [[ -n "$SHA1_FILE" ]] && printf '%s\n' "$line" >>"$SHA1_FILE"
+    ;;
+  sha256)
+    [[ -n "$SHA256_FILE" ]] && printf '%s\n' "$line" >>"$SHA256_FILE"
+    ;;
   esac
 }
 
@@ -104,37 +117,89 @@ fanout_checksums() {
 # --- arg parsing ---
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -d|--dir) SCAN_DIR="$2"; shift 2 ;;
-    -s|--sha1) SHA1_FILE="$2"; shift 2 ;;
-    --sha1-append) SHA1_APPEND=1; shift ;;
-    --sha256) SHA256_FILE="$2"; shift 2 ;;
-    --sha256-append) SHA256_APPEND=1; shift ;;
-    -t|--threshold) THRESHOLD_BYTES="$(parse_size "$2")"; shift 2 ;;
-    -j|--jobs) SMALL_JOBS="$2"; shift 2 ;;
-    --small) SMALL_COMPRESSOR="$2"; shift 2 ;;
-    --big) BIG_COMPRESSOR="$2"; shift 2 ;;
-    --big-jobs) BIG_JOBS="$2"; shift 2 ;;
-    --xz-level) XZ_LEVEL="$2"; shift 2 ;;
-    --zstd-level) ZSTD_LEVEL="$2"; shift 2 ;;
-    --pzstd-level) PZSTD_LEVEL="$2"; shift 2 ;;
-    --ext)
-      if [[ "$EXTENSIONS_CUSTOMIZED" -eq 0 ]]; then
-        EXTENSIONS=()
-        EXTENSIONS_CUSTOMIZED=1
-      fi
-      IFS=',' read -r -a _ext_parts <<<"${2// /,}"
-      for part in "${_ext_parts[@]}"; do
-        part="${part,,}"
-        part="${part#.}"
-        [[ -z "$part" ]] && continue
-        EXTENSIONS+=("$part")
-      done
-      shift 2
-      ;;
-    -q|--quiet) QUIET=1; shift ;;
-    -h|--help) usage; exit 0 ;;
-    --) shift; break ;;
-    *) echo "Unknown option: $1" >&2; usage; exit 2 ;;
+  -d | --dir)
+    SCAN_DIR="$2"
+    shift 2
+    ;;
+  -s | --sha1)
+    SHA1_FILE="$2"
+    shift 2
+    ;;
+  --sha1-append)
+    SHA1_APPEND=1
+    shift
+    ;;
+  --sha256)
+    SHA256_FILE="$2"
+    shift 2
+    ;;
+  --sha256-append)
+    SHA256_APPEND=1
+    shift
+    ;;
+  -t | --threshold)
+    THRESHOLD_BYTES="$(parse_size "$2")"
+    shift 2
+    ;;
+  -j | --jobs)
+    SMALL_JOBS="$2"
+    shift 2
+    ;;
+  --small)
+    SMALL_COMPRESSOR="$2"
+    shift 2
+    ;;
+  --big)
+    BIG_COMPRESSOR="$2"
+    shift 2
+    ;;
+  --big-jobs)
+    BIG_JOBS="$2"
+    shift 2
+    ;;
+  --xz-level)
+    XZ_LEVEL="$2"
+    shift 2
+    ;;
+  --zstd-level)
+    ZSTD_LEVEL="$2"
+    shift 2
+    ;;
+  --pzstd-level)
+    PZSTD_LEVEL="$2"
+    shift 2
+    ;;
+  --ext)
+    if [[ "$EXTENSIONS_CUSTOMIZED" -eq 0 ]]; then
+      EXTENSIONS=()
+      EXTENSIONS_CUSTOMIZED=1
+    fi
+    IFS=',' read -r -a _ext_parts <<<"${2// /,}"
+    for part in "${_ext_parts[@]}"; do
+      part="${part,,}"
+      part="${part#.}"
+      [[ -z "$part" ]] && continue
+      EXTENSIONS+=("$part")
+    done
+    shift 2
+    ;;
+  -q | --quiet)
+    QUIET=1
+    shift
+    ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  --)
+    shift
+    break
+    ;;
+  *)
+    echo "Unknown option: $1" >&2
+    usage
+    exit 2
+    ;;
   esac
 done
 
@@ -146,18 +211,14 @@ fi
 prepare_file_for_write "$SHA1_FILE" "$SHA1_APPEND"
 prepare_file_for_write "$SHA256_FILE" "$SHA256_APPEND"
 
-fsize() {
-  stat -c '%s' -- "$1" 2>/dev/null || stat -f '%z' -- "$1"
-}
-
 skip_if_already_compressed() {
   local file="$1" actual
   actual="$(detect_actual_format "$file")"
   case "$actual" in
-    gz|bz2|xz|zst)
-      log "skip (already compressed: ${actual}): $file"
-      return 0
-      ;;
+  gz | bz2 | xz | zst)
+    log "skip (already compressed: ${actual}): $file"
+    return 0
+    ;;
   esac
   return 1
 }
@@ -179,7 +240,10 @@ compress_small() {
     return 0
   fi
   out="$(out_name "$f" "$SMALL_COMPRESSOR")"
-  [[ -e "$out" ]] && { log "skip: $f"; return 0; }
+  [[ -e "$out" ]] && {
+    log "skip: $f"
+    return 0
+  }
 
   tmp="${out}.tmp.${PARALLEL_SEQ:-$$}"
   rm -f -- "$tmp"
@@ -205,22 +269,22 @@ compress_small() {
   local pipeline_failed=0
   if [[ -n "$sha1_tmp" || -n "$sha256_tmp" ]]; then
     if [[ -n "$sha1_tmp" && -n "$sha256_tmp" ]]; then
-      if ! "${read_cmd[@]}" \
-        | tee >(sha1sum | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha1_tmp") \
-              >(sha256sum | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha256_tmp") \
-        | $compress_cmd_str >"$tmp"; then
+      if ! "${read_cmd[@]}" |
+        tee >(sha1sum | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha1_tmp") \
+          >(sha256sum | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha256_tmp") |
+        $compress_cmd_str >"$tmp"; then
         pipeline_failed=1
       fi
     elif [[ -n "$sha1_tmp" ]]; then
-      if ! "${read_cmd[@]}" \
-        | tee >(sha1sum | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha1_tmp") \
-        | $compress_cmd_str >"$tmp"; then
+      if ! "${read_cmd[@]}" |
+        tee >(sha1sum | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha1_tmp") |
+        $compress_cmd_str >"$tmp"; then
         pipeline_failed=1
       fi
     else
-      if ! "${read_cmd[@]}" \
-        | tee >(sha256sum | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha256_tmp") \
-        | $compress_cmd_str >"$tmp"; then
+      if ! "${read_cmd[@]}" |
+        tee >(sha256sum | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha256_tmp") |
+        $compress_cmd_str >"$tmp"; then
         pipeline_failed=1
       fi
     fi
@@ -259,7 +323,10 @@ compress_big_seq() {
     return 0
   fi
   out="$(out_name "$f" "$BIG_COMPRESSOR")"
-  [[ -e "$out" ]] && { log "skip: $f"; return 0; }
+  [[ -e "$out" ]] && {
+    log "skip: $f"
+    return 0
+  }
 
   tmp="${out}.tmp.$$"
   rm -f -- "$tmp"
@@ -285,22 +352,22 @@ compress_big_seq() {
   local pipeline_failed=0
   if [[ -n "$sha1_tmp" || -n "$sha256_tmp" ]]; then
     if [[ -n "$sha1_tmp" && -n "$sha256_tmp" ]]; then
-      if ! "${read_cmd[@]}" \
-        | tee >(sha1sum | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha1_tmp") \
-              >(sha256sum | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha256_tmp") \
-        | $compress_cmd_str >"$tmp"; then
+      if ! "${read_cmd[@]}" |
+        tee >(sha1sum | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha1_tmp") \
+          >(sha256sum | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha256_tmp") |
+        $compress_cmd_str >"$tmp"; then
         pipeline_failed=1
       fi
     elif [[ -n "$sha1_tmp" ]]; then
-      if ! "${read_cmd[@]}" \
-        | tee >(sha1sum | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha1_tmp") \
-        | $compress_cmd_str >"$tmp"; then
+      if ! "${read_cmd[@]}" |
+        tee >(sha1sum | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha1_tmp") |
+        $compress_cmd_str >"$tmp"; then
         pipeline_failed=1
       fi
     else
-      if ! "${read_cmd[@]}" \
-        | tee >(sha256sum | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha256_tmp") \
-        | $compress_cmd_str >"$tmp"; then
+      if ! "${read_cmd[@]}" |
+        tee >(sha256sum | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha256_tmp") |
+        $compress_cmd_str >"$tmp"; then
         pipeline_failed=1
       fi
     fi
@@ -364,13 +431,13 @@ fi
 
 find "$SCAN_DIR" -type f \( "${ext_pred[@]}" \) \
   ! -name '*.zst' ! -name '*.tzst' ! -name '*.xz' ! -name '*.txz' -print0 |
-while IFS= read -r -d '' f; do
-  if [[ "$(fsize "$f")" -lt "$THRESHOLD_BYTES" ]]; then
-    printf '%s\0' "$f" >>"$small_list"
-  else
-    printf '%s\0' "$f" >>"$big_list"
-  fi
-done || true
+  while IFS= read -r -d '' f; do
+    if [[ "$(stat -c '%s' -- "$f" 2>/dev/null || stat -f '%z' -- "$f")" -lt "$THRESHOLD_BYTES" ]]; then
+      printf '%s\0' "$f" >>"$small_list"
+    else
+      printf '%s\0' "$f" >>"$big_list"
+    fi
+  done || true
 
 # small files in parallel
 if [[ -n "$SHA1_FILE" || -n "$SHA256_FILE" ]]; then
