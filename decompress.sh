@@ -102,6 +102,15 @@ add_predicate() {
   ext_pred+=("-name" "*.${ext}")
 }
 
+magic_predicate=()
+add_magic_predicate() {
+  local ext="$1"
+  if [[ "${#magic_predicate[@]}" -gt 0 ]]; then
+    magic_predicate+=("-o")
+  fi
+  magic_predicate+=("-name" "*.${ext}")
+}
+
 for comp in "${SUPPORTED_COMPRESSORS[@]}"; do
   for ext in ${COMPRESSOR_EXTS[$comp]}; do
     add_predicate "$ext"
@@ -109,12 +118,18 @@ for comp in "${SUPPORTED_COMPRESSORS[@]}"; do
 done
 
 for ext in "${MAGIC_ONLY_EXTENSIONS[@]}"; do
-  add_predicate "$ext"
+  add_magic_predicate "$ext"
 done
 
 if [[ "${#ext_pred[@]}" -eq 0 ]]; then
   log "No file patterns configured; exiting."
   exit 0
+fi
+
+if [[ "${#magic_predicate[@]}" -gt 0 ]]; then
+  while IFS= read -r -d '' magic_file; do
+    rename_misnamed_file "$magic_file" >/dev/null || true
+  done < <(find "$SCAN_DIR" -type f \( "${magic_predicate[@]}" \) -print0)
 fi
 
 decompress_file() {
