@@ -114,6 +114,20 @@ fi
 
 decompress_file() {
   local f="$1" compressor out tmp
+
+  # First check if file is misnamed and rename if needed
+  local new_f
+  if new_f="$(rename_misnamed_file "$f" 2>/dev/null)"; then
+    # Rename succeeded, use the new filename
+    if [[ -n "$new_f" && "$new_f" != "$f" ]]; then
+      f="$new_f"
+    fi
+  else
+    # Rename failed (likely target exists), continue with original filename
+    # The rename function already logged the reason
+    :
+  fi
+
   case "$f" in
     *.txz)  compressor="pixz"; out="${f%.txz}.tar" ;;
     *.xz)   compressor="pixz"; out="${f%.xz}" ;;
@@ -166,7 +180,9 @@ decompress_file() {
 found_any=0
 while IFS= read -r -d '' file; do
   found_any=1
-  decompress_file "$file"
+  if ! decompress_file "$file"; then
+    log "error: failed to decompress $file (continuing...)"
+  fi
 done < <(find "$SCAN_DIR" -type f \( "${ext_pred[@]}" \) -print0)
 
 if [[ "$found_any" -eq 0 ]]; then

@@ -96,6 +96,115 @@ detect_tar_compression() {
   esac
 }
 
+detect_actual_format() {
+  local file="$1" file_output
+  file_output="$(file --brief --mime-type "$file" 2>/dev/null || file --brief "$file" 2>/dev/null || echo "unknown")"
+
+  case "$file_output" in
+    *gzip*|*application/gzip*)
+      echo "gz"
+      ;;
+    *bzip2*|*application/bzip2*)
+      echo "bz2"
+      ;;
+    *xz*|*application/x-xz*)
+      echo "xz"
+      ;;
+    *zstd*|*application/zstd*)
+      echo "zst"
+      ;;
+    *"POSIX tar archive"*|*"tar archive"*|*application/x-tar*)
+      echo "tar"
+      ;;
+    *"compress'd data"*|*application/x-compress*)
+      echo "Z"
+      ;;
+    *)
+      echo "unknown"
+      ;;
+  esac
+}
+
+get_expected_extension() {
+  local file="$1"
+  case "$file" in
+    *.gz) echo "gz" ;;
+    *.bz2) echo "bz2" ;;
+    *.xz) echo "xz" ;;
+    *.zst) echo "zst" ;;
+    *.tgz) echo "gz" ;;
+    *.txz) echo "xz" ;;
+    *.tzst) echo "zst" ;;
+    *.tbz|*.tbz2) echo "bz2" ;;
+    *) echo "unknown" ;;
+  esac
+}
+
+rename_misnamed_file() {
+  local file="$1" actual_ext expected_ext new_name
+  actual_ext="$(detect_actual_format "$file")"
+  expected_ext="$(get_expected_extension "$file")"
+
+  # Skip if actual format matches expected or is unknown
+  if [[ "$actual_ext" == "unknown" || "$actual_ext" == "$expected_ext" ]]; then
+    return 0
+  fi
+
+  # Handle special case: file is actually a tar archive but has compression extension
+  if [[ "$actual_ext" == "tar" ]]; then
+    # Handle compound extensions like .tar.gz, .tgz, etc.
+    case "$file" in
+      *.tar.gz|*.tar.xz|*.tar.bz2|*.tar.zst)
+        new_name="${file%.*.*}.tar"  # Remove both extensions and add .tar
+        ;;
+      *.tgz|*.txz|*.tbz|*.tbz2|*.tzst)
+        new_name="${file%.*}.tar"  # Remove compound extension and add .tar
+        ;;
+      *.gz|*.xz|*.bz2|*.zst)
+        new_name="${file%.*}.tar"  # Remove compression extension and add .tar
+        ;;
+      *)
+        new_name="${file}.tar"  # Just add .tar
+        ;;
+    esac
+
+    # Check if target file already exists
+    if [[ -e "$new_name" ]]; then
+      log "magic: skipping rename $file -> $new_name (target already exists)"
+      return 1
+    fi
+
+    log "magic: DEBUG - target $new_name does not exist, proceeding with rename"
+
+    log "magic: renaming misnamed file $file -> $new_name (actual format: tar archive)"
+    mv -- "$file" "$new_name"
+    echo "$new_name"
+    return 0
+  fi
+
+  # Rename to correct compression extension
+  case "$file" in
+    *.tgz|*.txz|*.tzst|*.tbz|*.tbz2)
+      # For compound extensions, replace the compression part
+      new_name="${file%.*}.$actual_ext"
+      ;;
+    *)
+      # For simple extensions, just replace
+      new_name="${file%.*}.$actual_ext"
+      ;;
+  esac
+
+  # Check if target file already exists
+  if [[ -e "$new_name" ]]; then
+    log "magic: skipping rename $file -> $new_name (target already exists)"
+    return 1
+  fi
+
+  log "magic: renaming misnamed file $file -> $new_name (actual format: $actual_ext)"
+  mv -- "$file" "$new_name"
+  echo "$new_name"
+}
+
 # File path manipulation
 strip_archive_suffixes() {
   local name="$1" lowered
