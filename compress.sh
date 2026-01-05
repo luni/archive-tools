@@ -265,7 +265,7 @@ compress_big_seq() {
   [[ -n "$sha256_line" ]] && append_checksum_line sha256 "$sha256_line"
 }
 
-export -f compress_small out_name emit_checksum_lines log
+export -f compress_small out_name emit_checksum_lines log skip_if_already_compressed
 export SMALL_COMPRESSOR XZ_LEVEL ZSTD_LEVEL QUIET SHA1_FILE SHA256_FILE CHECKSUM_DELIM REMOVE_SOURCE
 
 small_list="$(mktemp)"
