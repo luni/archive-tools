@@ -391,6 +391,73 @@ _run_magic_format_detection_test() {
   fi
 }
 
+run_overwrite_test() {
+  run_standard_test "decompress.sh overwrite test" _run_overwrite_test
+}
+
+_run_overwrite_test() {
+  local tmpdir="$1"
+
+  # Test case 1: Default behavior - skip existing files
+  echo "original content" >"$tmpdir/overwrite_test.txt"
+  echo "new content" >"$tmpdir/overwrite_test_new.txt"
+  gzip -c "$tmpdir/overwrite_test_new.txt" >"$tmpdir/overwrite_test.txt.gz"
+  rm "$tmpdir/overwrite_test_new.txt"
+
+  "$DECOMPRESS_SCRIPT" --dir "$tmpdir" >/dev/null 2>&1
+
+  # Should skip decompression since target exists (default behavior)
+  if [[ "$(cat "$tmpdir/overwrite_test.txt")" != "original content" ]]; then
+    echo "Target file was overwritten when it should have been skipped (default behavior)" >&2
+    return 1
+  fi
+
+  # Test case 2: With --overwrite - should overwrite existing files
+  echo "original content 2" >"$tmpdir/overwrite_test2.txt"
+  echo "new content 2" >"$tmpdir/overwrite_test2_new.txt"
+  gzip -c "$tmpdir/overwrite_test2_new.txt" >"$tmpdir/overwrite_test2.txt.gz"
+  rm "$tmpdir/overwrite_test2_new.txt"
+
+  "$DECOMPRESS_SCRIPT" --dir "$tmpdir" --overwrite >/dev/null 2>&1
+
+  # Should overwrite existing file
+  if [[ "$(cat "$tmpdir/overwrite_test2.txt")" != "new content 2" ]]; then
+    echo "Target file was not overwritten when --overwrite was specified" >&2
+    return 1
+  fi
+
+  # Test case 3: Test with different compression formats
+  local compressors=(xz zst gz bz2)
+  local compressor_tools=(xz zstd gzip bzip2)
+
+  for i in "${!compressors[@]}"; do
+    local ext="${compressors[$i]}"
+    local tool="${compressor_tools[$i]}"
+
+    # Create existing file
+    echo "original $ext content" >"$tmpdir/overwrite_$ext.txt"
+
+    # Create compressed version with different content
+    echo "new $ext content" >"$tmpdir/overwrite_$ext.new.txt"
+    case "$tool" in
+      xz) xz -c "$tmpdir/overwrite_$ext.new.txt" >"$tmpdir/overwrite_$ext.txt.$ext" ;;
+      zstd) zstd -c "$tmpdir/overwrite_$ext.new.txt" >"$tmpdir/overwrite_$ext.txt.$ext" ;;
+      gzip) gzip -c "$tmpdir/overwrite_$ext.new.txt" >"$tmpdir/overwrite_$ext.txt.$ext" ;;
+      bzip2) bzip2 -c "$tmpdir/overwrite_$ext.new.txt" >"$tmpdir/overwrite_$ext.txt.$ext" ;;
+    esac
+    rm "$tmpdir/overwrite_$ext.new.txt"
+
+    # Test with --overwrite
+    "$DECOMPRESS_SCRIPT" --dir "$tmpdir" --overwrite >/dev/null 2>&1
+
+    # Should overwrite existing file
+    if [[ "$(cat "$tmpdir/overwrite_$ext.txt")" != "new $ext content" ]]; then
+      echo "Target file was not overwritten for $ext format when --overwrite was specified" >&2
+      return 1
+    fi
+  done
+}
+
 run_decompress_suite() {
   run_single_decompress_test false "keep-compressed"
   run_single_decompress_test true "remove-compressed"
@@ -399,6 +466,7 @@ run_decompress_suite() {
   run_magic_format_detection_test
   run_comprehensive_magic_detection_test
   run_edge_cases_test
+  run_overwrite_test
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

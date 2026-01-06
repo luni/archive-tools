@@ -8,6 +8,7 @@ source "${SCRIPT_DIR}/common.sh"
 SCAN_DIR="."
 QUIET=0
 REMOVE_COMPRESSED=0
+OVERWRITE=0
 CUSTOM_COMPRESSORS=0
 SUPPORTED_COMPRESSORS=(pixz pzstd pigz pbzip2)
 MAGIC_ONLY_EXTENSIONS=(zip rar 7z)
@@ -24,6 +25,7 @@ Options:
                             First use replaces defaults.
   -r, --remove-source       Delete the compressed file after a successful restore.
   -q, --quiet               Suppress info logs.
+      --overwrite           Overwrite existing files (do not skip).
   -h, --help                Show this help text.
 EOF
 }
@@ -85,6 +87,10 @@ while [[ $# -gt 0 ]]; do
     ;;
   -q | --quiet)
     QUIET=1
+    shift
+    ;;
+      --overwrite)
+    OVERWRITE=1
     shift
     ;;
   -h | --help)
@@ -216,8 +222,12 @@ decompress_file() {
   fi
 
   if [[ -e "$out" ]]; then
-    log "skip (target exists): $out"
-    return 0
+    if [[ "$OVERWRITE" -eq 1 ]]; then
+      log "overwrite: $out"
+    else
+      log "skip (target exists): $out"
+      return 0
+    fi
   fi
 
   tmp="${out}.tmp.$$"
