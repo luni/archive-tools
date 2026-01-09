@@ -207,3 +207,7 @@ marimo/_lsp/
 __marimo__/
 
 /.coverage
+
+tests/fixtures/real_data
+tests/fixtures/real_data_v2
+

@@ -1,17 +1,25 @@
-name: Python Code Checks
+name: Torrent Compress Recovery Tests
 
 permissions:
   contents: read
 
 on:
   pull_request:
+    paths:
+      - 'tools/torrent_compress_recovery/**'
   push:
+    paths:
+      - 'tools/torrent_compress_recovery/**'
   workflow_dispatch:
 
 jobs:
   test:
-    name: Validate Code
+    name: Validate Torrent Compress Recovery
     runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: tools/torrent_compress_recovery
 
     steps:
       - name: Checkout code
@@ -21,8 +29,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/uv
-          key: uv-cache-${{ hashFiles('**/pyproject.toml') }}
-          restore-keys: uv-cache-
+          key: uv-cache-torrent-compress-recovery-${{ hashFiles('tools/torrent_compress_recovery/pyproject.toml') }}
+          restore-keys: uv-cache-torrent-compress-recovery-
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -55,5 +63,5 @@ jobs:
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
         with:
-          file: ./coverage.xml
+          file: tools/torrent_compress_recovery/coverage.xml
           fail_ci_if_error: false
