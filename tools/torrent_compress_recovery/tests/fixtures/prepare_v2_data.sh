@@ -37,11 +37,36 @@ for name in readme.txt data.bin config.json; do
     gzip -n -6 -c "$RAW_DIR/$name" > "$DATA_DIR/$name.gz"
 done
 
+# Create pigz-compressed versions with different settings
+if command -v pigz >/dev/null 2>&1; then
+    for name in readme.txt data.bin config.json; do
+        # pigz with different compression levels and options
+        pigz -1 -c "$RAW_DIR/$name" > "$DATA_DIR/${name}.pigz1.gz"
+        pigz -6 -c "$RAW_DIR/$name" > "$DATA_DIR/${name}.pigz6.gz"
+        pigz -9 -c "$RAW_DIR/$name" > "$DATA_DIR/${name}.pigz9.gz"
+        pigz -6 --rsyncable -c "$RAW_DIR/$name" > "$DATA_DIR/${name}.pigz_rsync.gz"
+    done
+    echo "Created pigz compressed files"
+else
+    echo "pigz not available, skipping pigz test data"
+fi
+
 # Gzip files in subdirectory
 for name in documents/notes.txt; do
     mkdir -p "$DATA_DIR/documents"
     gzip -n -6 -c "$RAW_DIR/$name" > "$DATA_DIR/$name.gz"
 done
+
+# Create pigz versions for subdirectory files
+if command -v pigz >/dev/null 2>&1; then
+    for name in documents/notes.txt; do
+        mkdir -p "$DATA_DIR/documents"
+        pigz -1 -c "$RAW_DIR/$name" > "$DATA_DIR/${name}.pigz1.gz"
+        pigz -6 -c "$RAW_DIR/$name" > "$DATA_DIR/${name}.pigz6.gz"
+        pigz -9 -c "$RAW_DIR/$name" > "$DATA_DIR/${name}.pigz9.gz"
+        pigz -6 --rsyncable -c "$RAW_DIR/$name" > "$DATA_DIR/${name}.pigz_rsync.gz"
+    done
+fi
 
 # Create truncated partial copies (first half)
 mkdir -p "$PARTIAL_DIR/documents"
