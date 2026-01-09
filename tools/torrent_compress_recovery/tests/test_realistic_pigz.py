@@ -56,10 +56,11 @@ def test_generate_gzip_candidates_with_pigz(real_data_dir: Path):
         try:
             import gzip
             import tempfile
+
             with tempfile.NamedTemporaryFile() as tmp:
                 tmp.write(data)
                 tmp.flush()
-                with gzip.open(tmp.name, 'rb') as f:
+                with gzip.open(tmp.name, "rb") as f:
                     decompressed = f.read()
             if decompressed:
                 valid_count += 1
@@ -88,7 +89,7 @@ def test_pigz_files_are_distinct(real_data_dir: Path):
         unique_contents = set(file_contents)
 
         # At least some should be different (different compression levels)
-        assert len(unique_contents) >= 2, f"Expected pigz variants to be different, but all were identical"
+        assert len(unique_contents) >= 2, "Expected pigz variants to be different, but all were identical"
 
         # Higher compression should generally produce smaller files (for compressible data)
         pigz1_size = pigz_files.get(f"{base_name}.pigz1.gz", b"").__len__()
@@ -111,13 +112,13 @@ def test_pigz_header_parsing(real_data_dir: Path):
         assert header is not None, f"Failed to parse header for {gz_file.name}"
 
         # Basic header validation
-        assert hasattr(header, 'mtime'), f"Missing mtime in header for {gz_file.name}"
-        assert hasattr(header, 'os'), f"Missing os in header for {gz_file.name}"
-        assert hasattr(header, 'flags'), f"Missing flags in header for {gz_file.name}"
+        assert hasattr(header, "mtime"), f"Missing mtime in header for {gz_file.name}"
+        assert hasattr(header, "os"), f"Missing os in header for {gz_file.name}"
+        assert hasattr(header, "flags"), f"Missing flags in header for {gz_file.name}"
 
         # Verify the file can be decompressed
         try:
-            with gzip.open(gz_file, 'rb') as f:
+            with gzip.open(gz_file, "rb") as f:
                 content = f.read()
             assert len(content) > 0, f"Empty content after decompressing {gz_file.name}"
         except Exception as e:
@@ -138,16 +139,17 @@ def test_pigz_rsyncable_option(real_data_dir: Path):
         # Both should be valid gzip and decompress to the same content
         import gzip
         import tempfile
+
         with tempfile.NamedTemporaryFile() as tmp1:
             tmp1.write(regular_data)
             tmp1.flush()
-            with gzip.open(tmp1.name, 'rb') as f:
+            with gzip.open(tmp1.name, "rb") as f:
                 regular_content = f.read()
 
             with tempfile.NamedTemporaryFile() as tmp2:
                 tmp2.write(rsyncable_data)
                 tmp2.flush()
-                with gzip.open(tmp2.name, 'rb') as f:
+                with gzip.open(tmp2.name, "rb") as f:
                     rsyncable_content = f.read()
 
             assert regular_content == rsyncable_content, "Both should decompress to the same content"

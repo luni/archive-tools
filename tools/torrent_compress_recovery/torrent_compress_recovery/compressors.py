@@ -1,5 +1,6 @@
 """Compressor implementations for fallback from raw to compressed."""
 
+import bz2
 import gzip
 import shutil
 from abc import ABC, abstractmethod
@@ -35,9 +36,26 @@ class GzipCompressor(Compressor):
                 shutil.copyfileobj(f_in, gz)
 
 
+class Bzip2Compressor(Compressor):
+    """bzip2 compressor."""
+
+    @property
+    def extension(self) -> str:
+        return ".bz2"
+
+    def compress(self, src: Path, dst: Path, dry_run: bool) -> None:
+        if dry_run:
+            return
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        with src.open("rb") as f_in:
+            with dst.open("wb") as f_out:
+                f_out.write(bz2.compress(f_in.read()))
+
+
 # Registry of compressors
 _COMPRESSORS: dict[str, type[Compressor]] = {
     ".gz": GzipCompressor,
+    ".bz2": Bzip2Compressor,
 }
 
 

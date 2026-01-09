@@ -5,21 +5,26 @@ from pathlib import Path
 
 from .bencode import parse_torrent
 
+# Gzip trailer constants
+GZIP_TRAILER_SIZE = 8
+GZIP_CRC32_SIZE = 4
+GZIP_ISIZE_SIZE = 4
+
 
 def read_gzip_trailer(path: Path) -> tuple[int, int] | None:
     """Read CRC32 and ISIZE from the last 8 bytes of a gzip file."""
     # Check file size first - files smaller than 8 bytes are broken
     file_size = path.stat().st_size
-    if file_size < 8:
+    if file_size < GZIP_TRAILER_SIZE:
         return None
 
     with path.open("rb") as f:
-        f.seek(-8, 2)  # Seek 8 bytes from end
+        f.seek(-GZIP_TRAILER_SIZE, 2)  # Seek 8 bytes from end
         trailer = f.read()
-    if len(trailer) != 8:
+    if len(trailer) != GZIP_TRAILER_SIZE:
         return None
-    crc32 = int.from_bytes(trailer[:4], "little")
-    isize = int.from_bytes(trailer[4:], "little")
+    crc32 = int.from_bytes(trailer[:GZIP_CRC32_SIZE], "little")
+    isize = int.from_bytes(trailer[GZIP_CRC32_SIZE:], "little")
     return crc32, isize
 
 

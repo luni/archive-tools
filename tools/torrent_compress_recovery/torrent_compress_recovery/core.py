@@ -8,7 +8,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .bencode import parse_torrent
-from .gzip import find_matching_candidate, generate_gzip_candidates, parse_gzip_header, sha1_piece
+from .bz2 import find_matching_candidate, generate_bzip2_candidates, parse_bzip2_header, sha1_piece
+from .gzip import find_matching_candidate as find_gzip_candidate
+from .gzip import generate_gzip_candidates, parse_gzip_header
 
 
 def iter_files(root: Path) -> Iterable[Path]:
@@ -52,6 +54,7 @@ def copy_file(src: Path, dst: Path, dry_run: bool) -> None:
 class Result:
     recovered: int
     gzipped: int
+    bzipped: int
     skipped: int
     missing: int
 
@@ -74,6 +77,7 @@ def recover(
 
     recovered = 0
     gzipped = 0
+    bzipped = 0
     skipped = 0
     missing = 0
 
@@ -83,8 +87,8 @@ def recover(
             skipped += 1
             continue
 
-        # Only handle .gz files for now (skip symlinks and other files)
-        if not tf.rel_path.endswith(".gz"):
+        # Handle .gz and .bz2 files (skip symlinks and other files)
+        if not (tf.rel_path.endswith(".gz") or tf.rel_path.endswith(".bz2")):
             skipped += 1
             continue
 
@@ -105,8 +109,25 @@ def recover(
             continue
         target_piece_hash = meta.pieces[start_piece_index]
 
-        # Get raw name for later use
-        raw_name = expected_name[: -len(".gz")]
+        # Determine file type and get raw name
+        is_gz = tf.rel_path.endswith(".gz")
+        if is_gz:
+            raw_name = expected_name[: -len(".gz")]
+        # Handle double extensions like .bz1.bz2, .pbz6.bz2, etc.
+        elif expected_name.endswith(".bz2"):
+            # Remove the last .bz2 extension
+            without_bz2 = expected_name[: -len(".bz2")]
+            # Check if there's another compression extension
+            if without_bz2.endswith((".bz1", ".bz6", ".bz9", ".pbz1", ".pbz6", ".pbz9")):
+                # Remove the compression level extension too
+                if without_bz2.endswith((".bz1", ".bz6", ".bz9")):
+                    raw_name = without_bz2[:-4]  # Remove .bzX
+                else:  # .pbzX
+                    raw_name = without_bz2[:-5]  # Remove .pbzX
+            else:
+                raw_name = without_bz2
+        else:
+            raw_name = expected_name
 
         # 1) Try to find a partial file and use it as a candidate
         cand_partial = partial_index.get(expected_name, [])
@@ -122,7 +143,10 @@ def recover(
                     recovered += 1
                     continue
             # Otherwise, use it to extract header settings for brute-force
-            header = parse_gzip_header(chosen)
+            if is_gz:
+                header = parse_gzip_header(chosen)
+            else:  # is_bz2
+                header = parse_bzip2_header(chosen)
         else:
             header = None
 
@@ -135,9 +159,14 @@ def recover(
                         file_hash = hashlib.sha1(f.read()).digest()
                     if file_hash == tf.sha1:
                         # Found exact match by SHA1, compress it
-                        candidates = generate_gzip_candidates(raw_path, header)
+                        if is_gz:
+                            candidates = generate_gzip_candidates(raw_path, header)
+                            match_func = find_gzip_candidate
+                        else:  # is_bz2
+                            candidates = generate_bzip2_candidates(raw_path, header)
+                            match_func = find_matching_candidate
                         hash_algo = "sha256" if meta.version in {"v2", "hybrid"} else "sha1"
-                        match = find_matching_candidate(candidates, target_piece_hash, meta.piece_length, hash_algo)
+                        match = match_func(candidates, target_piece_hash, meta.piece_length, hash_algo)
                         if match:
                             _, data = match
                             if not dry_run and dst.exists() and overwrite:
@@ -145,7 +174,10 @@ def recover(
                             dst.parent.mkdir(parents=True, exist_ok=True)
                             if not dry_run:
                                 dst.write_bytes(data)
-                            gzipped += 1
+                            if is_gz:
+                                gzipped += 1
+                            else:  # is_bz2
+                                bzipped += 1
                             continue
 
         # 2) Find raw file for brute-force generation
@@ -156,9 +188,14 @@ def recover(
             continue
 
         # 3) Generate candidates and find one that matches the first piece hash
-        candidates = generate_gzip_candidates(raw_src, header)
+        if is_gz:
+            candidates = generate_gzip_candidates(raw_src, header)
+            match_func = find_gzip_candidate
+        else:  # is_bz2
+            candidates = generate_bzip2_candidates(raw_src, header)
+            match_func = find_matching_candidate
         hash_algo = "sha256" if meta.version in {"v2", "hybrid"} else "sha1"
-        match = find_matching_candidate(candidates, target_piece_hash, meta.piece_length, hash_algo)
+        match = match_func(candidates, target_piece_hash, meta.piece_length, hash_algo)
         if match is None:
             missing += 1
             continue
@@ -168,11 +205,15 @@ def recover(
         dst.parent.mkdir(parents=True, exist_ok=True)
         if not dry_run:
             dst.write_bytes(data)
-        gzipped += 1
+        if is_gz:
+            gzipped += 1
+        else:  # is_bz2
+            bzipped += 1
 
     return Result(
         recovered=recovered,
         gzipped=gzipped,
+        bzipped=bzipped,
         skipped=skipped,
         missing=missing,
     )

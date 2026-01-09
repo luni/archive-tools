@@ -7,6 +7,30 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+# Gzip format constants
+GZIP_MAGIC = b"\x1f\x8b"
+GZIP_METHOD_DEFLATE = 8
+GZIP_MIN_HEADER_SIZE = 10
+GZIP_FLAG_FTEXT = 1
+GZIP_FLAG_FHCRC = 2
+GZIP_FLAG_FEXTRA = 4
+GZIP_FLAG_FNAME = 8
+GZIP_FLAG_FCOMMENT = 16
+GZIP_FLAG_RESERVED1 = 32
+GZIP_FLAG_RESERVED2 = 64
+GZIP_FLAG_RESERVED3 = 128
+GZIP_XFL_POS = 8
+GZIP_OS_POS = 9
+GZIP_MTIME_POS = 4
+GZIP_MTIME_SIZE = 4
+GZIP_METHOD_POS = 2
+GZIP_FLAGS_POS = 3
+GZIP_XLEN_SIZE = 2
+# Common compression levels
+GZIP_MIN_LEVEL = 1
+GZIP_DEFAULT_LEVEL = 6
+GZIP_MAX_LEVEL = 9
+
 
 @dataclass(frozen=True)
 class GzipHeader:
@@ -22,31 +46,31 @@ def parse_gzip_header(path: Path) -> GzipHeader | None:
     """Parse the gzip header from a file (first 10 bytes + optional fields)."""
     with path.open("rb") as f:
         data = f.read(256)  # enough for header and most extra fields
-    if len(data) < 10 or data[:2] != b"\x1f\x8b":
+    if len(data) < GZIP_MIN_HEADER_SIZE or data[:2] != GZIP_MAGIC:
         return None
-    method = data[2]
-    if method != 8:
+    method = data[GZIP_METHOD_POS]
+    if method != GZIP_METHOD_DEFLATE:
         return None
-    flags = data[3]
-    mtime = int.from_bytes(data[4:8], "little")
-    xfl = data[8]
-    os = data[9]
-    pos = 10
+    flags = data[GZIP_FLAGS_POS]
+    mtime = int.from_bytes(data[GZIP_MTIME_POS : GZIP_MTIME_POS + GZIP_MTIME_SIZE], "little")
+    # xfl = data[GZIP_XFL_POS]  # XFL not used in our implementation
+    os = data[GZIP_OS_POS]
+    pos = GZIP_MIN_HEADER_SIZE
     extra = None
     fname = None
     fcomment = None
-    if flags & 4:  # FEXTRA
-        xlen = int.from_bytes(data[pos : pos + 2], "little")
-        pos += 2
+    if flags & GZIP_FLAG_FEXTRA:  # FEXTRA
+        xlen = int.from_bytes(data[pos : pos + GZIP_XLEN_SIZE], "little")
+        pos += GZIP_XLEN_SIZE
         extra = data[pos : pos + xlen]
         pos += xlen
-    if flags & 8:  # FNAME
+    if flags & GZIP_FLAG_FNAME:  # FNAME
         end = data.find(b"\x00", pos)
         if end == -1:
             return None
         fname = data[pos:end]
         pos = end + 1
-    if flags & 16:  # FCOMMENT
+    if flags & GZIP_FLAG_FCOMMENT:  # FCOMMENT
         end = data.find(b"\x00", pos)
         if end == -1:
             return None
@@ -64,21 +88,21 @@ def format_gzip_header(header: GzipHeader) -> str:
         f"flags: {header.flags:08b}",
     ]
     flag_names = []
-    if header.flags & 1:
+    if header.flags & GZIP_FLAG_FTEXT:
         flag_names.append("FTEXT")
-    if header.flags & 2:
+    if header.flags & GZIP_FLAG_FHCRC:
         flag_names.append("FHCRC")
-    if header.flags & 4:
+    if header.flags & GZIP_FLAG_FEXTRA:
         flag_names.append("FEXTRA")
-    if header.flags & 8:
+    if header.flags & GZIP_FLAG_FNAME:
         flag_names.append("FNAME")
-    if header.flags & 16:
+    if header.flags & GZIP_FLAG_FCOMMENT:
         flag_names.append("FCOMMENT")
-    if header.flags & 32:
+    if header.flags & GZIP_FLAG_RESERVED1:
         flag_names.append("RESERVED1")
-    if header.flags & 64:
+    if header.flags & GZIP_FLAG_RESERVED2:
         flag_names.append("RESERVED2")
-    if header.flags & 128:
+    if header.flags & GZIP_FLAG_RESERVED3:
         flag_names.append("RESERVED3")
     lines.append(f"flag_names: {', '.join(flag_names) if flag_names else '(none)'}")
     if header.extra is not None:
@@ -100,31 +124,31 @@ def format_gzip_header(header: GzipHeader) -> str:
 
 def patch_gzip_header(data: bytes, header: GzipHeader) -> bytes:
     """Patch gzip header fields to match the provided header (mtime, OS, flags, fname, fcomment, extra)."""
-    if len(data) < 10:
+    if len(data) < GZIP_MIN_HEADER_SIZE:
         return data
     # Preserve method (should be 8)
     patched = bytearray(data)
     # Update flags
-    patched[3] = header.flags & 0xFF
+    patched[GZIP_FLAGS_POS] = header.flags & 0xFF
     # Update mtime (little-endian)
-    patched[4:8] = header.mtime.to_bytes(4, "little")
+    patched[GZIP_MTIME_POS : GZIP_MTIME_POS + GZIP_MTIME_SIZE] = header.mtime.to_bytes(GZIP_MTIME_SIZE, "little")
     # Update XFL and OS
     # Note: We don't store XFL in GzipHeader, so we leave it as-is or set to 0
-    patched[8] = 0  # XFL set to 0 for consistency
-    patched[9] = header.os & 0xFF
-    pos = 10
+    patched[GZIP_XFL_POS] = 0  # XFL set to 0 for consistency
+    patched[GZIP_OS_POS] = header.os & 0xFF
+    pos = GZIP_MIN_HEADER_SIZE
     # Handle FEXTRA
-    if header.flags & 4:
+    if header.flags & GZIP_FLAG_FEXTRA:
         if header.extra is not None:
             extra_len = len(header.extra)
-            patched = patched[:pos] + extra_len.to_bytes(2, "little") + header.extra + patched[pos + 2 :]
-            pos += 2 + extra_len
+            patched = patched[:pos] + extra_len.to_bytes(GZIP_XLEN_SIZE, "little") + header.extra + patched[pos + GZIP_XLEN_SIZE :]
+            pos += GZIP_XLEN_SIZE + extra_len
         else:
             # Remove existing extra if any
-            extra_len = int.from_bytes(patched[pos : pos + 2], "little")
-            patched = patched[:pos] + patched[pos + 2 + extra_len :]
+            extra_len = int.from_bytes(patched[pos : pos + GZIP_XLEN_SIZE], "little")
+            patched = patched[:pos] + patched[pos + GZIP_XLEN_SIZE + extra_len :]
     # Handle FNAME
-    if header.flags & 8:
+    if header.flags & GZIP_FLAG_FNAME:
         if header.fname is not None:
             fname_bytes = header.fname + b"\x00"
             patched = patched[:pos] + fname_bytes + patched[pos:]
@@ -136,7 +160,7 @@ def patch_gzip_header(data: bytes, header: GzipHeader) -> bytes:
                 patched = patched[:pos] + patched[end + 1 :]
                 pos = len(patched)
     # Handle FCOMMENT
-    if header.flags & 16:
+    if header.flags & GZIP_FLAG_FCOMMENT:
         if header.fcomment is not None:
             fcomment_bytes = header.fcomment + b"\x00"
             patched = patched[:pos] + fcomment_bytes + patched[pos:]
@@ -179,7 +203,7 @@ def generate_gzip_candidates(src: Path, header: GzipHeader | None) -> list[tuple
     except (FileNotFoundError, subprocess.CalledProcessError):
         pass
     for tool in tools:
-        for level in [1, 6, 9]:
+        for level in [GZIP_MIN_LEVEL, GZIP_DEFAULT_LEVEL, GZIP_MAX_LEVEL]:
             for no_name in [True, False]:
                 for rsyncable in [False, True] if tool == "gzip" else [False]:
                     cmd = [tool, f"-{level}"]

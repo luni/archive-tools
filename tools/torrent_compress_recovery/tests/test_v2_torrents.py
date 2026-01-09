@@ -1,10 +1,10 @@
 """Test v2 torrent support."""
 
-import bencodepy
-import pytest
 from pathlib import Path
 
-from torrent_compress_recovery.bencode import parse_torrent, BencodeError
+import bencodepy
+
+from torrent_compress_recovery.bencode import parse_torrent
 
 
 def test_parse_v2_single_file_torrent(tmp_path: Path):
