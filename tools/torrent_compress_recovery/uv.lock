@@ -531,6 +531,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pyben"
+version = "0.3.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ba/41/5eea56d283da685a2eb4e9529f2245f16a330af22fbadfddea51f8688a1b/pyben-0.3.2.tar.gz", hash = "sha256:523eeebda9fbd30b523cac27d1eb83896f18599e7efee6a5319b682585f3ef78", size = 81104 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/96/88/a9dee49a0ea8e9abb14c688a0a38dcde1c6670fb5ce0c8ed74ae0057f27b/pyben-0.3.2-py2.py3-none-any.whl", hash = "sha256:b3ed47ccfbaee443e268ac1a4721b8e211f282f45caa21eb0584cb3865789914", size = 15695 },
+]
+
+[[package]]
 name = "pygments"
 version = "2.19.2"
 source = { registry = "https://pypi.org/simple" }
@@ -850,6 +859,7 @@ dev = [
     { name = "pytest", version = "9.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
     { name = "pytest-cov" },
     { name = "ruff" },
+    { name = "torrentfile" },
     { name = "vulture" },
     { name = "xenon" },
 ]
@@ -866,8 +876,21 @@ dev = [
     { name = "pytest-cov", specifier = ">=4.0.0" },
     { name = "ruff" },
     { name = "ruff", specifier = ">=0.13.3" },
+    { name = "torrentfile", specifier = ">=0.9.2" },
     { name = "vulture", specifier = ">=2.14" },
     { name = "xenon", specifier = ">=0.9.3" },
+]
+
+[[package]]
+name = "torrentfile"
+version = "0.9.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyben" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ec/23/6e3399dc8965cca7da2073bce66ba58a5ff656c7cb90a2201da0138642a0/torrentfile-0.9.2.tar.gz", hash = "sha256:f74aea1b1b4b3fdfb3af8806eb17c858b5c527127354f829db9cbe2023a00b38", size = 395716 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/10/6e/bcdfc144a112e67c784ff1fa683b9500bf5ed61ee89072b0f53d3e2362e0/torrentfile-0.9.2-py3-none-any.whl", hash = "sha256:0ac9cc3eafa870e6b1e8f2b4ee7fabcadba5d89952308ec698eea579b9f1e88a", size = 51742 },
 ]
 
 [[package]]

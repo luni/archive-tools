@@ -30,19 +30,22 @@ for gz_file in "$DATA_DIR"/*.gz; do
     fi
 done
 
-# Create torrent using ctorrent
-# Create a subdirectory with only the gz files for ctorrent
+# Create torrent using torrentfile CLI (supports v1, v2, and hybrid)
+cd "$(dirname "$0")/../.."
+
+# Create a temporary directory with only the gz files for torrentfile
 GZ_ONLY_DIR="$DATA_DIR/gz_only_temp"
 mkdir -p "$GZ_ONLY_DIR"
-cp "$DATA_DIR"/*.gz "$GZ_ONLY_DIR/"
+cp "$DATA_DIR"/*.gz "$GZ_ONLY_DIR/" 2>/dev/null || true
 
-# Run ctorrent to create torrent from directory
-cd "$GZ_ONLY_DIR"
-ctorrent -t -s sample.torrent -u http://localhost:6969/announce -l 65536 .
-mv sample.torrent "$DATA_DIR/sample.torrent"
+uv run torrentfile create \
+    --announce "http://localhost:6969/announce" \
+    --piece-length 20 \
+    --comment "torrent-compress-recovery-test-generator" \
+    --out "$DATA_DIR/sample.torrent" \
+    "$GZ_ONLY_DIR"
 
 # Clean up the temporary directory
-cd /
 rm -rf "$GZ_ONLY_DIR"
 
 echo "Prepared realistic test data in $DATA_DIR"

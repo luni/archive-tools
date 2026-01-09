@@ -4,8 +4,6 @@ import hashlib
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from torrent_compress_recovery.bencode import parse_torrent
 from torrent_compress_recovery.core import recover
 

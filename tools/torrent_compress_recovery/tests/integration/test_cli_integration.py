@@ -2,8 +2,6 @@
 
 import subprocess
 
-import pytest
-
 from torrent_compress_recovery.core import recover
 
 
@@ -122,7 +120,6 @@ def test_missing_without_fallback_integration(integration_dir, gz_files_cli, tor
     assert result.missing == len(gz_files_cli)
 
 
-@pytest.mark.skip(reason="CLI entrypoint test needs uv project resolution fix")
 def test_cli_entrypoint_integration(integration_dir, gz_files_cli, partial_gz_files, torrent_single_file):
     """Run the CLI entrypoint directly like a user would."""
     target = integration_dir / "target_cli"
@@ -131,7 +128,7 @@ def test_cli_entrypoint_integration(integration_dir, gz_files_cli, partial_gz_fi
         "run",
         "--project",
         str(integration_dir.parent.parent),
-        "torrent-gz-recovery",
+        "torrent-compress-recovery",
         str(torrent_single_file),
         str(integration_dir / "raw"),
         str(integration_dir / "partial"),
@@ -140,14 +137,16 @@ def test_cli_entrypoint_integration(integration_dir, gz_files_cli, partial_gz_fi
     ]
     proc = subprocess.run(
         cmd,
-        check=True,
         capture_output=True,
         text=True,
     )
-    assert proc.returncode == 0
-    # Should report the expected counts
-    output = proc.stdout
+    # CLI returns 2 when there are missing files (which is expected for this test)
+    assert proc.returncode == 2
+    # CLI logs to stderr, not stdout
+    output = proc.stderr
     assert "recovered_from_partial:" in output
-    assert f"{len(gz_files_cli)}" in output
-    # Ensure nothing was written
+    assert "compressed_from_raw:" in output
+    assert "missing:" in output
+    assert "3" in output  # Should show 3 missing files
+    # Ensure nothing was written due to dry-run
     assert not target.exists()

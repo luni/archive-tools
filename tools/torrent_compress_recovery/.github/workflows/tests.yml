@@ -1,0 +1,59 @@
+name: Python Code Checks
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Validate Code
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Cache uv dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-cache-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: uv-cache-
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          uv sync --dev
+
+      - name: Create test fixtures (V1)
+        run: |
+          cd tests/fixtures
+          ./prepare_real_data.sh
+
+      - name: Create test fixtures (V2)
+        run: |
+          cd tests/fixtures
+          ./prepare_v2_data.sh
+
+      - name: Run tests with coverage
+        run: |
+          uv run pytest --cov=torrent_compress_recovery --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false

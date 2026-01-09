@@ -8,8 +8,13 @@ from .bencode import parse_torrent
 
 def read_gzip_trailer(path: Path) -> tuple[int, int] | None:
     """Read CRC32 and ISIZE from the last 8 bytes of a gzip file."""
+    # Check file size first - files smaller than 8 bytes are broken
+    file_size = path.stat().st_size
+    if file_size < 8:
+        return None
+
     with path.open("rb") as f:
-        f.seek(-8, 2)
+        f.seek(-8, 2)  # Seek 8 bytes from end
         trailer = f.read()
     if len(trailer) != 8:
         return None
