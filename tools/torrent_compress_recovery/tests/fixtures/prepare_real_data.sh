@@ -4,7 +4,7 @@
 set -e
 
 HERE="$(dirname "$0")"
-DATA_DIR="$HERE/real_data"
+DATA_DIR="$(realpath "$HERE/real_data")"
 RAW_DIR="$DATA_DIR/raw"
 PARTIAL_DIR="$DATA_DIR/partial"
 
@@ -22,29 +22,31 @@ for name in readme.txt data.bin config.json; do
 done
 
 # Create truncated partial copies (first half)
+mkdir -p "$PARTIAL_DIR"
 for gz_file in "$DATA_DIR"/*.gz; do
-    partial_file="$PARTIAL_DIR/$(basename "$gz_file")"
-    head -c "$(($(wc -c < "$gz_file") / 2))" "$gz_file" > "$partial_file"
+    if [ -f "$gz_file" ]; then
+        partial_file="$PARTIAL_DIR/$(basename "$gz_file")"
+        head -c "$(($(wc -c < "$gz_file") / 2))" "$gz_file" > "$partial_file"
+    fi
 done
 
 # Create torrent using ctorrent
-cd "$DATA_DIR"
-
 # Create a subdirectory with only the gz files for ctorrent
-GZ_ONLY_DIR="$DATA_DIR/gz_only"
+GZ_ONLY_DIR="$DATA_DIR/gz_only_temp"
 mkdir -p "$GZ_ONLY_DIR"
-cp *.gz "$GZ_ONLY_DIR/"
+cp "$DATA_DIR"/*.gz "$GZ_ONLY_DIR/"
 
 # Run ctorrent to create torrent from directory
 cd "$GZ_ONLY_DIR"
-ctorrent -t -s ../sample.torrent -u http://localhost:6969/announce -l 65536 .
+ctorrent -t -s sample.torrent -u http://localhost:6969/announce -l 65536 .
+mv sample.torrent "$DATA_DIR/sample.torrent"
 
 # Clean up the temporary directory
-cd ..
+cd /
 rm -rf "$GZ_ONLY_DIR"
 
 echo "Prepared realistic test data in $DATA_DIR"
-echo "Raw files: $(ls -1 "$RAW_DIR" 2>/dev/null || echo "none")"
-echo "Gz files: $(ls -1 "$DATA_DIR"/*.gz 2>/dev/null | xargs -n1 basename 2>/dev/null || echo "none")"
-echo "Partial files: $(ls -1 "$PARTIAL_DIR" 2>/dev/null || echo "none")"
+echo "Raw files: $(ls -1 "$RAW_DIR" 2>/dev/null | tr '\n' ' ' || echo "none")"
+echo "Gz files: $(ls -1 "$DATA_DIR"/*.gz 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ' || echo "none")"
+echo "Partial files: $(ls -1 "$PARTIAL_DIR" 2>/dev/null | tr '\n' ' ' || echo "none")"
 echo "Torrent: $DATA_DIR/sample.torrent"
