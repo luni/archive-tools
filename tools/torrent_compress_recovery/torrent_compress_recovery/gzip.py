@@ -80,6 +80,30 @@ def parse_gzip_header(path: Path) -> GzipHeader | None:
     return GzipHeader(mtime=mtime, os=os, flags=flags, extra=extra, fname=fname, fcomment=fcomment)
 
 
+def _get_flag_names(flags: int) -> list[str]:
+    """Extract flag names from flag bitmask."""
+    flag_mappings = [
+        (GZIP_FLAG_FTEXT, "FTEXT"),
+        (GZIP_FLAG_FHCRC, "FHCRC"),
+        (GZIP_FLAG_FEXTRA, "FEXTRA"),
+        (GZIP_FLAG_FNAME, "FNAME"),
+        (GZIP_FLAG_FCOMMENT, "FCOMMENT"),
+        (GZIP_FLAG_RESERVED1, "RESERVED1"),
+        (GZIP_FLAG_RESERVED2, "RESERVED2"),
+        (GZIP_FLAG_RESERVED3, "RESERVED3"),
+    ]
+
+    return [name for flag, name in flag_mappings if flags & flag]
+
+
+def _safe_decode_bytes(data: bytes) -> str:
+    """Safely decode bytes to string, falling back to repr on error."""
+    try:
+        return data.decode("utf-8", errors="replace")
+    except Exception:
+        return repr(data)
+
+
 def format_gzip_header(header: GzipHeader) -> str:
     """Return a human-readable summary of gzip header fields."""
     lines = [
@@ -87,38 +111,19 @@ def format_gzip_header(header: GzipHeader) -> str:
         f"OS: {header.os}",
         f"flags: {header.flags:08b}",
     ]
-    flag_names = []
-    if header.flags & GZIP_FLAG_FTEXT:
-        flag_names.append("FTEXT")
-    if header.flags & GZIP_FLAG_FHCRC:
-        flag_names.append("FHCRC")
-    if header.flags & GZIP_FLAG_FEXTRA:
-        flag_names.append("FEXTRA")
-    if header.flags & GZIP_FLAG_FNAME:
-        flag_names.append("FNAME")
-    if header.flags & GZIP_FLAG_FCOMMENT:
-        flag_names.append("FCOMMENT")
-    if header.flags & GZIP_FLAG_RESERVED1:
-        flag_names.append("RESERVED1")
-    if header.flags & GZIP_FLAG_RESERVED2:
-        flag_names.append("RESERVED2")
-    if header.flags & GZIP_FLAG_RESERVED3:
-        flag_names.append("RESERVED3")
+
+    flag_names = _get_flag_names(header.flags)
     lines.append(f"flag_names: {', '.join(flag_names) if flag_names else '(none)'}")
+
     if header.extra is not None:
         lines.append(f"extra: {len(header.extra)} bytes")
+
     if header.fname is not None:
-        try:
-            fname_str = header.fname.decode("utf-8", errors="replace")
-        except Exception:
-            fname_str = repr(header.fname)
-        lines.append(f"fname: {fname_str}")
+        lines.append(f"fname: {_safe_decode_bytes(header.fname)}")
+
     if header.fcomment is not None:
-        try:
-            fcomment_str = header.fcomment.decode("utf-8", errors="replace")
-        except Exception:
-            fcomment_str = repr(header.fcomment)
-        lines.append(f"fcomment: {fcomment_str}")
+        lines.append(f"fcomment: {_safe_decode_bytes(header.fcomment)}")
+
     return "\n".join(lines)
 
 
@@ -177,51 +182,78 @@ def sha1_piece(data: bytes) -> bytes:
     return hashlib.sha1(data).digest()
 
 
-def generate_gzip_candidates(src: Path, header: GzipHeader | None) -> list[tuple[str, bytes]]:
-    """Generate candidate gzip bytes for a source file using common tools/settings."""
-    candidates: list[tuple[str, bytes]] = []
-    src_bytes = src.read_bytes()
-    # 1) Try to match header settings if available
-    if header:
-        # Use python gzip with exact header fields (except mtime which we set)
-        with tempfile.NamedTemporaryFile(delete=False) as tmp:
-            tmp_path = Path(tmp.name)
-            try:
-                with gzip.GzipFile(filename="", mode="wb", fileobj=tmp_path.open("wb"), mtime=header.mtime) as gz:
-                    gz.write(src_bytes)
-                data = tmp_path.read_bytes()
-                # Patch flags/fname/fcomment/extra if needed (simplified)
-                data = patch_gzip_header(data, header)
-                candidates.append(("header_match", data))
-            finally:
-                tmp_path.unlink()
-    # 2) Brute-force common tools/levels
+def _generate_header_match_candidate(src_bytes: bytes, header: GzipHeader) -> tuple[str, bytes]:
+    """Generate a candidate that matches the exact header settings."""
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+        try:
+            with gzip.GzipFile(filename="", mode="wb", fileobj=tmp_path.open("wb"), mtime=header.mtime) as gz:
+                gz.write(src_bytes)
+            data = tmp_path.read_bytes()
+            data = patch_gzip_header(data, header)
+            return ("header_match", data)
+        finally:
+            tmp_path.unlink()
+
+
+def _get_available_tools() -> list[str]:
+    """Get list of available compression tools."""
     tools = ["gzip"]
     try:
         subprocess.run(["pigz", "--version"], check=True, capture_output=True)  # nosec B603, B607
         tools.append("pigz")
     except (FileNotFoundError, subprocess.CalledProcessError):
         pass
+    return tools
+
+
+def _build_command(tool: str, level: int, no_name: bool, rsyncable: bool) -> list[str]:
+    """Build compression command with appropriate flags."""
+    cmd = [tool, f"-{level}"]
+    if no_name:
+        cmd.append("-n")
+    if rsyncable:
+        cmd.append("--rsyncable")
+    return cmd
+
+
+def _generate_tool_candidate(src: Path, tool: str, level: int, no_name: bool, rsyncable: bool, header: GzipHeader | None) -> tuple[str, bytes] | None:
+    """Generate a candidate using a specific tool and settings."""
+    cmd = _build_command(tool, level, no_name, rsyncable)
+    cmd.extend(["-c", str(src)])
+
+    try:
+        proc = subprocess.run(cmd, check=True, capture_output=True)  # nosec B603
+        data = proc.stdout
+        if header:
+            data = patch_gzip_header(data, header)
+        label = f"{tool} -{level}" + (" -n" if no_name else "") + (" --rsyncable" if rsyncable else "")
+        return (label, data)
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+
+
+def generate_gzip_candidates(src: Path, header: GzipHeader | None) -> list[tuple[str, bytes]]:
+    """Generate candidate gzip bytes for a source file using common tools/settings."""
+    candidates: list[tuple[str, bytes]] = []
+    src_bytes = src.read_bytes()
+
+    # 1) Try to match header settings if available
+    if header:
+        candidates.append(_generate_header_match_candidate(src_bytes, header))
+
+    # 2) Brute-force common tools/levels
+    tools = _get_available_tools()
+
     for tool in tools:
         for level in [GZIP_MIN_LEVEL, GZIP_DEFAULT_LEVEL, GZIP_MAX_LEVEL]:
             for no_name in [True, False]:
-                for rsyncable in [False, True] if tool == "gzip" else [False]:
-                    cmd = [tool, f"-{level}"]
-                    if no_name:
-                        cmd.append("-n")
-                    if rsyncable:
-                        cmd.append("--rsyncable")
-                    cmd.extend(["-c", str(src)])
-                    try:
-                        proc = subprocess.run(cmd, check=True, capture_output=True)  # nosec B603
-                        data = proc.stdout
-                        # Apply header patching if we have a header and this candidate is likely to be used
-                        if header:
-                            data = patch_gzip_header(data, header)
-                        label = f"{tool} -{level}" + (" -n" if no_name else "") + (" --rsyncable" if rsyncable else "")
-                        candidates.append((label, data))
-                    except (FileNotFoundError, subprocess.CalledProcessError):
-                        continue
+                rsyncable_options = [False, True] if tool == "gzip" else [False]
+                for rsyncable in rsyncable_options:
+                    candidate = _generate_tool_candidate(src, tool, level, no_name, rsyncable, header)
+                    if candidate:
+                        candidates.append(candidate)
+
     return candidates
 
 
