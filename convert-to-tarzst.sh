@@ -103,12 +103,20 @@ f="${TAR_FILENAME:-}"
 if [[ -z "$f" || "$f" == */ ]]; then
   exit 0
 fi
-hash="$(sha256sum | awk '{print $1}')"
-manifest_line="$(printf '%s\t%s\n' "$hash" "$f")"
+tmp_size="$(mktemp)"
+if ! hash="$(tee >(wc -c | awk '{print $1}' >"$tmp_size") | sha256sum | awk '{print $1}')"; then
+  rm -f "$tmp_size"
+  exit 1
+fi
+if ! read -r size <"$tmp_size"; then
+  size=0
+fi
+rm -f "$tmp_size"
+manifest_line="$(printf '%s\t%s\t%s\n' "$hash" "$f" "$size")"
 if [[ -n "${TMP_MANIFEST:-}" ]]; then
   printf '%s\n' "$manifest_line" >>"$TMP_MANIFEST"
 fi
-printf '%s  %s\n' "$hash" "$f"
+printf '%s  %s  %s\n' "$hash" "$f" "$size"
 EOF
   chmod +x "$tmp_command"
 
@@ -127,7 +135,7 @@ EOF
     ;;
   esac
 
-  LC_ALL=C sort -t $'\t' -k2,2 "$tmp_manifest" | awk -F $'\t' '{printf "%s  %s\n", $1, $2}' >>"$dest"
+  LC_ALL=C sort -t $'\t' -k2,2 "$tmp_manifest" | awk -F $'\t' '{printf "%s  %s  %s\n", $1, $2, $3}' >>"$dest"
 
   rm -f "$tmp_files" "$tmp_command" "$tmp_manifest"
 }

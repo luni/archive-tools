@@ -227,14 +227,21 @@ lines_skipped=0
 process_manifest() {
   local manifest="$1" line line_no=0 manifest_entries=0
   local -a manifest_pairs=()
+  local hash rest entry_path
   while IFS= read -r line || [[ -n "$line" ]]; do
     line_no=$((line_no + 1))
     line="${line%$'\r'}"
     [[ -z "$line" ]] && continue
     [[ "$line" =~ ^[[:space:]]*# ]] && continue
     if [[ "$line" =~ ^([[:xdigit:]]{64})[[:space:]][[:space:]]+(.+)$ ]]; then
-      record_entry "${BASH_REMATCH[1]}" "$manifest" "${BASH_REMATCH[2]}"
-      manifest_pairs+=("${BASH_REMATCH[1]}$SEP${BASH_REMATCH[2]}")
+      hash="${BASH_REMATCH[1]}"
+      rest="${BASH_REMATCH[2]}"
+      entry_path="$rest"
+      if [[ "$rest" =~ ^(.*[^[:space:]])[[:space:]][[:space:]]+([0-9]+)$ ]]; then
+        entry_path="${BASH_REMATCH[1]}"
+      fi
+      record_entry "$hash" "$manifest" "$entry_path"
+      manifest_pairs+=("$hash$SEP$entry_path")
       entries_recorded=$((entries_recorded + 1))
       manifest_entries=$((manifest_entries + 1))
     else

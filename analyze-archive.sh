@@ -9,7 +9,6 @@ tmp_manifest=""
 tmp_tar_entries=""
 tmp_tar_command=""
 
-
 cleanup() {
   if [[ -n "$tmp_manifest" && -f "$tmp_manifest" ]]; then
     rm -f "$tmp_manifest"
@@ -266,9 +265,20 @@ stream_entry() {
   esac
 }
 
-compute_sha256() {
+compute_sha256_and_size() {
   local archive="$1" entry="$2"
-  stream_entry "$archive" "$entry" | sha256sum | awk '{print $1}'
+  local tmp_size hash size
+  tmp_size="$(mktemp)"
+  if ! hash="$(stream_entry "$archive" "$entry" | tee >(wc -c | awk '{print $1}' >"$tmp_size") | sha256sum | awk '{print $1}')"; then
+    rm -f "$tmp_size"
+    return 1
+  fi
+  if ! read -r size <"$tmp_size"; then
+    rm -f "$tmp_size"
+    return 1
+  fi
+  rm -f "$tmp_size"
+  printf '%s\t%s\n' "$hash" "$size"
 }
 
 ARCHIVE=""
@@ -421,11 +431,19 @@ if [[ -z "$f" || "$f" == */ ]]; then
   exit 0
 fi
 printf 'processing: %s\n' "$f" >&2
-hash="$(sha256sum | awk '{print $1}')"
-if [[ -n "${TMP_MANIFEST:-}" ]]; then
-  printf '%s\t%s\n' "$hash" "$f" >>"$TMP_MANIFEST"
+tmp_size="$(mktemp)"
+if ! hash="$(tee >(wc -c | awk '{print $1}' >"$tmp_size") | sha256sum | awk '{print $1}')"; then
+  rm -f "$tmp_size"
+  exit 1
 fi
-printf '%s  %s\n' "$hash" "$f"
+if ! read -r size <"$tmp_size"; then
+  size=0
+fi
+rm -f "$tmp_size"
+if [[ -n "${TMP_MANIFEST:-}" ]]; then
+  printf '%s\t%s\t%s\n' "$hash" "$f" "$size" >>"$TMP_MANIFEST"
+fi
+printf '%s  %s  %s\n' "$hash" "$f" "$size"
 EOF
     chmod +x "$tmp_tar_command"
 
@@ -444,12 +462,17 @@ else
   while IFS= read -r -d '' entry; do
     files_processed=$((files_processed + 1))
     log "processing: $entry"
-    if ! hash="$(compute_sha256 "$ARCHIVE" "$entry")"; then
+    if ! result="$(compute_sha256_and_size "$ARCHIVE" "$entry")"; then
       rm -f "$tmp_entries_list"
       die "Failed to compute SHA-256 for $entry"
     fi
-    printf '%s\t%s\n' "$hash" "$entry" >>"$tmp_manifest"
-    printf '%s  %s\n' "$hash" "$entry"
+    hash="${result%%$'\t'*}"
+    size="${result#*$'\t'}"
+    if [[ "$size" == "$hash" ]]; then
+      size=""
+    fi
+    printf '%s\t%s\t%s\n' "$hash" "$entry" "$size" >>"$tmp_manifest"
+    printf '%s  %s  %s\n' "$hash" "$entry" "$size"
   done <"$tmp_entries_list"
   rm -f "$tmp_entries_list"
 fi
@@ -458,6 +481,6 @@ if [[ "$files_processed" -eq 0 ]]; then
   log "No files found inside archive."
   rm -f -- "$OUTPUT_FILE"
 else
-  LC_ALL=C sort -t $'\t' -k2,2 "$tmp_manifest" | awk -F $'\t' '{printf "%s  %s\n", $1, $2}' >"$OUTPUT_FILE"
+  LC_ALL=C sort -t $'\t' -k2,2 "$tmp_manifest" | awk -F $'\t' '{printf "%s  %s  %s\n", $1, $2, $3}' >"$OUTPUT_FILE"
   log "Processed $files_processed file(s)."
 fi

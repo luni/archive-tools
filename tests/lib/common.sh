@@ -87,7 +87,13 @@ verify_checksum_file() {
     [[ -z "$line" ]] && continue
     if [[ "$line" =~ ^([[:xdigit:]]{40}|[[:xdigit:]]{64})[[:space:]][[:space:]]+(.+)$ ]]; then
       local hash="${BASH_REMATCH[1]}"
-      local path="${BASH_REMATCH[2]}"
+      local rest="${BASH_REMATCH[2]}"
+      local path="$rest"
+      local size=""
+      if [[ "$rest" =~ ^(.*[^[:space:]])[[:space:]][[:space:]]+([0-9]+)$ ]]; then
+        path="${BASH_REMATCH[1]}"
+        size="${BASH_REMATCH[2]}"
+      fi
       if [[ -n "${expected[$path]:-}" ]]; then
         if [[ "$hash" != "${expected[$path]}" ]]; then
           echo "Checksum mismatch for $path in $file" >&2

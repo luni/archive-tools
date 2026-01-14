@@ -195,9 +195,15 @@ _run_analyze_archive_case() {
   declare -A seen_paths=()
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -z "$line" ]] && continue
-    local hash="${line%%  *}"
-    local path="${line#*  }"
-    local normalized="${path#./}"
+    if [[ "$line" =~ ^([[:xdigit:]]{64})[[:space:]][[:space:]]+(.+)[[:space:]][[:space:]]+([0-9]+)$ ]]; then
+      local hash="${BASH_REMATCH[1]}"
+      local path="${BASH_REMATCH[2]}"
+      local size="${BASH_REMATCH[3]}"
+      local normalized="${path#./}"
+    else
+      echo "Malformed manifest line (${archive_type}): $line" >&2
+      return 1
+    fi
 
     if [[ -n "$previous_path" && "$path" < "$previous_path" ]]; then
       echo "Manifest entries are not sorted lexicographically (${archive_type})" >&2

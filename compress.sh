@@ -235,7 +235,7 @@ out_name() {
 }
 
 compress_small() {
-  local f="$1" out tmp sha1_line="" sha256_line=""
+  local f="$1" out tmp sha1_line="" sha256_line="" size=""
   if skip_if_already_compressed "$f"; then
     return 0
   fi
@@ -250,7 +250,10 @@ compress_small() {
 
   local sha1_tmp="" sha256_tmp=""
   [[ -n "${SHA1_FILE:-}" ]] && sha1_tmp="$(mktemp)"
-  [[ -n "${SHA256_FILE:-}" ]] && sha256_tmp="$(mktemp)"
+  if [[ -n "${SHA256_FILE:-}" ]]; then
+    sha256_tmp="$(mktemp)"
+    size="$(stat -c '%s' -- "$f" 2>/dev/null || stat -f '%z' -- "$f")"
+  fi
 
   local -a read_cmd=(cat -- "$f")
   local compress_cmd_str
@@ -271,7 +274,7 @@ compress_small() {
     if [[ -n "$sha1_tmp" && -n "$sha256_tmp" ]]; then
       if ! "${read_cmd[@]}" |
         tee >(sha1sum | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha1_tmp") \
-          >(sha256sum | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha256_tmp") |
+          >(sha256sum | awk -v path="$f" -v size="$size" '{printf "%s  %s  %s\n", $1, path, size}' >"$sha256_tmp") |
         $compress_cmd_str >"$tmp"; then
         pipeline_failed=1
       fi
@@ -283,7 +286,7 @@ compress_small() {
       fi
     else
       if ! "${read_cmd[@]}" |
-        tee >(sha256sum | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha256_tmp") |
+        tee >(sha256sum | awk -v path="$f" -v size="$size" '{printf "%s  %s  %s\n", $1, path, size}' >"$sha256_tmp") |
         $compress_cmd_str >"$tmp"; then
         pipeline_failed=1
       fi
@@ -318,7 +321,7 @@ compress_small() {
 }
 
 compress_big_seq() {
-  local f="$1" out tmp sha1_line="" sha256_line=""
+  local f="$1" out tmp sha1_line="" sha256_line="" size=""
   if skip_if_already_compressed "$f"; then
     return 0
   fi
@@ -333,7 +336,10 @@ compress_big_seq() {
 
   local sha1_tmp="" sha256_tmp=""
   [[ -n "$SHA1_FILE" ]] && sha1_tmp="$(mktemp)"
-  [[ -n "$SHA256_FILE" ]] && sha256_tmp="$(mktemp)"
+  if [[ -n "$SHA256_FILE" ]]; then
+    sha256_tmp="$(mktemp)"
+    size="$(stat -c '%s' -- "$f" 2>/dev/null || stat -f '%z' -- "$f")"
+  fi
 
   local -a read_cmd=(pv -ptebar -N "$f" -- "$f")
 
@@ -354,7 +360,7 @@ compress_big_seq() {
     if [[ -n "$sha1_tmp" && -n "$sha256_tmp" ]]; then
       if ! "${read_cmd[@]}" |
         tee >(sha1sum | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha1_tmp") \
-          >(sha256sum | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha256_tmp") |
+          >(sha256sum | awk -v path="$f" -v size="$size" '{printf "%s  %s  %s\n", $1, path, size}' >"$sha256_tmp") |
         $compress_cmd_str >"$tmp"; then
         pipeline_failed=1
       fi
@@ -366,7 +372,7 @@ compress_big_seq() {
       fi
     else
       if ! "${read_cmd[@]}" |
-        tee >(sha256sum | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha256_tmp") |
+        tee >(sha256sum | awk -v path="$f" -v size="$size" '{printf "%s  %s  %s\n", $1, path, size}' >"$sha256_tmp") |
         $compress_cmd_str >"$tmp"; then
         pipeline_failed=1
       fi

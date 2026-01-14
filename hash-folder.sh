@@ -64,6 +64,8 @@ if command -v hashdeep >/dev/null 2>&1; then
   hashdeep -l -c sha256 -r "$DIRECTORY" | awk -F, -v dir="$DIRECTORY" '
     /^#/ || /^%%%%/ || /^sha256[[:space:]]+filename$/ || /^$/ { next }
     {
+      size = $1
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", size)
       path = $3
       # Remove directory prefix if present
       if (index(path, dir "/") == 1) {
@@ -71,7 +73,7 @@ if command -v hashdeep >/dev/null 2>&1; then
       }
       # Remove leading ./ if present
       gsub(/^\.\//, "", path)
-      print $2 "  " path
+      print $2 "  " path "  " size
     }
   ' >"$OUTPUT_FILE"
 else

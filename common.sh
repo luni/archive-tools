@@ -34,7 +34,7 @@ prepare_file_for_write() {
 }
 
 write_sha256_manifest() {
-	local root="$1" dest="$2" file rel hash
+	local root="$1" dest="$2" file rel hash size
 	[[ -z "$dest" ]] && return 0
 
 	while IFS= read -r -d '' file; do
@@ -43,7 +43,8 @@ write_sha256_manifest() {
 			rel="$(basename -- "$file")"
 		fi
 		hash="$(sha256sum -- "$file" | awk '{print $1}')"
-		printf '%s  %s\n' "$hash" "$rel" >>"$dest"
+		size="$(stat -c '%s' -- "$file")"
+		printf '%s  %s  %s\n' "$hash" "$rel" "$size" >>"$dest"
 	done < <(LC_ALL=C find "$root" -type f -print0 | LC_ALL=C sort -z)
 }
 

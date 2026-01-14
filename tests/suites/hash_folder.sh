@@ -48,7 +48,7 @@ _run_hash_folder_test() {
   # Verify all expected files are hashed correctly
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -z "$line" ]] && continue
-    if [[ "$line" =~ ^([[:xdigit:]]{64})[[:space:]][[:space:]]+(.+)$ ]]; then
+    if [[ "$line" =~ ^([[:xdigit:]]{64})[[:space:]][[:space:]]+(.+)[[:space:]][[:space:]]+([0-9]+)$ ]]; then
       local hash="${BASH_REMATCH[1]}"
       local path="${BASH_REMATCH[2]}"
       # Remove ./ prefix if present
@@ -64,6 +64,9 @@ _run_hash_folder_test() {
         fi
         unset expected_hashes["$path"]
       fi
+    else
+      echo "Unexpected manifest line: $line" >&2
+      return 1
     fi
   done <"$output_file"
 

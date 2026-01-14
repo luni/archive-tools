@@ -24,15 +24,15 @@ _run_find_duplicate_sha256_test() {
   local HASH_UNIQUE="dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
 
   cat >"$alpha" <<EOF
-$HASH_A  alpha/path-one.txt
-$HASH_DUP  alpha/path-two.bin
-$HASH_INTRA  alpha/path-three.bin
-$HASH_INTRA  alpha/path-four.bin
+$HASH_A  alpha/path-one.txt  111
+$HASH_DUP  alpha/path-two.bin  222
+$HASH_INTRA  alpha/path-three.bin  333
+$HASH_INTRA  alpha/path-four.bin  444
 EOF
 
   cat >"$bravo" <<EOF
-$HASH_DUP  bravo/shared.bin
-$HASH_UNIQUE  bravo/only.txt
+$HASH_DUP  bravo/shared.bin  555
+$HASH_UNIQUE  bravo/only.txt  666
 EOF
 
   local output
