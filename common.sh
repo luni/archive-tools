@@ -289,7 +289,7 @@ detect_actual_format() {
 }
 
 get_expected_extension() {
-	local file="$1"
+	local file="${1,,}"
 	case "$file" in
 	*.gz) echo "gz" ;;
 	*.bz2) echo "bz2" ;;
@@ -299,6 +299,8 @@ get_expected_extension() {
 	*.txz) echo "xz" ;;
 	*.tzst) echo "zst" ;;
 	*.tbz | *.tbz2) echo "bz2" ;;
+	*.lzma | *.tlz) echo "lzma" ;;
+	*.taz | *.tar.z | *.z) echo "Z" ;;
 	*.zip | *.zip.001 | *.z01) echo "zip" ;;
 	*.rar | *.rar.001 | *.part[0-9].rar | *.part[0-9][0-9].rar | *.part[0-9][0-9][0-9].rar) echo "rar" ;;
 	*.7z | *.7z.001) echo "7z" ;;

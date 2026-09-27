@@ -78,7 +78,8 @@ mkdir -p -- "$(dirname -- "$OUTPUT_FILE")"
 # with mv only after a fully successful scan, so a mid-run failure cannot
 # leave a truncated manifest that later dedupe passes would trust.
 tmp_manifest="$(mktemp -p "$(dirname -- "$OUTPUT_FILE")" ".$(basename -- "$OUTPUT_FILE").tmp.XXXXXX")"
-trap '[[ -n "$tmp_manifest" ]] && rm -f -- "$tmp_manifest"' EXIT
+hd_err=""
+trap '[[ -n "$tmp_manifest" ]] && rm -f -- "$tmp_manifest"; [[ -n "$hd_err" ]] && rm -f -- "$hd_err"' EXIT
 
 # Both the output path (a pre-existing manifest inside the scan root) and the
 # staging file itself must be excluded from the scan.

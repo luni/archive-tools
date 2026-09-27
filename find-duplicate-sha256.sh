@@ -383,7 +383,7 @@ while IFS= read -r -d '' manifest; do
   manifest="$(realpath -m -- "$manifest")"
   manifests_scanned=$((manifests_scanned + 1))
   process_manifest "$manifest"
-done < <(find "${dirs[@]}" -type f -name '*.sha256' -exec realpath -mz -- {} + | LC_ALL=C sort -zu)
+done < <(find "${dirs[@]}" -type f -iname '*.sha256' -exec realpath -mz -- {} + | LC_ALL=C sort -zu)
 
 if [[ "$manifests_scanned" -eq 0 ]]; then
   die "No .sha256 manifests found under the provided directory set."

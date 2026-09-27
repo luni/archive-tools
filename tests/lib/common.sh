@@ -35,19 +35,11 @@ log() {
 compressed_name_for() {
   local path="$1" compressor="$2"
   case "$compressor" in
-    xz)
-      if [[ "$path" == *.tar ]]; then
-        printf '%s\n' "${path%.tar}.txz"
-      else
-        printf '%s\n' "${path}.xz"
-      fi
+    xz | xz_big | pixz)
+      printf '%s\n' "${path}.xz"
       ;;
-    zstd)
-      if [[ "$path" == *.tar ]]; then
-        printf '%s\n' "${path%.tar}.tzst"
-      else
-        printf '%s\n' "${path}.zst"
-      fi
+    zstd | zstd_big | pzstd)
+      printf '%s\n' "${path}.zst"
       ;;
     *)
       echo "Unknown compressor: $compressor" >&2
@@ -59,10 +51,10 @@ compressed_name_for() {
 decompress_with() {
   local compressor="$1" src="$2" dest="$3"
   case "$compressor" in
-    xz)
+    xz | pixz)
       xz -dc -- "$src" >"$dest"
       ;;
-    zstd)
+    zstd | pzstd)
       zstd -dc -q -- "$src" >"$dest"
       ;;
     *)

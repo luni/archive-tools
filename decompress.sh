@@ -117,7 +117,7 @@ while [[ $# -gt 0 ]]; do
     QUIET=1
     shift
     ;;
-      --overwrite)
+  --overwrite)
     OVERWRITE=1
     shift
     ;;
@@ -134,6 +134,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ $# -eq 0 ]] || die "Unexpected positional arguments: $*"
+[[ -d "$SCAN_DIR" ]] || die "Scan directory not found: $SCAN_DIR"
 
 if [[ "${#SUPPORTED_COMPRESSORS[@]}" -eq 0 ]]; then
   die "At least one decompressor must be enabled (pixz, pzstd, pigz, or pbzip2)."
