@@ -1,0 +1,72 @@
+# common.sh — shared library
+
+Not a standalone tool: every script in this repository does
+`source common.sh`. It centralizes archive detection, magic-based file
+repair, compressor mappings, manifest writers, and misc helpers so the
+behavior stays consistent across the suite.
+
+## Archive detection
+
+| Function | Purpose |
+| --- | --- |
+| `is_split_archive FILE` | True for split volumes: `*.7z.NNN`, `*.zip.NNN`/`.zNN`, `*.rar.NNN`, `*.partN.rar`, `*.rNN`. |
+| `is_first_chunk FILE` | True only for the first volume: `*.001`, `*.part1.rar`, `*.part01.rar`, `*.part001.rar`. Used so manifests/conversions only run once per multi-volume archive. |
+| `detect_archive_type FILE` | Prints `7z`, `zip`, `rar`, `tar`, `tar.gz`, `tar.xz`, `tar.bz2`, `tar.zst`, or `unknown`. Compressed-tar spellings are matched before the generic `*.tar.*` catch-all, and 7z/zip/rar before tar, so `foo.tar.zip` classifies as `zip`. |
+| `detect_tar_compression FILE` | Prints `gz`, `bz2`, `xz`, `zst`, or `none` from the filename. |
+
+## Content sniffing / repair
+
+| Function | Purpose |
+| --- | --- |
+| `detect_actual_format FILE` | Maps `file` output to `gz`, `bz2`, `xz`, `zst`, `tar`, `Z`, `zip`, `rar`, `7z`, or `unknown`. |
+| `get_expected_extension FILE` | The format implied by the filename's extension. |
+| `rename_misnamed_file FILE` | Renames a file whose content disagrees with its extension (`f.zip` holding tar data → `f.tar`, etc.); refuses when the target exists. Prints the new name on stdout. |
+
+## Compressor mappings
+
+- `COMPRESSOR_EXTS` (assoc): `pixz`→`xz txz`, `pzstd`→`zst tzst`,
+  `pigz`→`gz tgz`, `pbzip2`→`bz2 tbz tbz2`.
+- `get_compression_extension TOOL`: `xz`/`pixz`→`xz`, `zstd`/`pzstd`→`zst`.
+- `get_compressor_command TOOL`: the command template for `compress.sh`
+  (`xz`, `zstd`, `pixz`, `xz_big`, `pzstd`, `zstd_big`).
+- `get_decompression_command CODEC`: display name of the decompressor used
+  for a tar stream (`pigz -dc`, `pbzip2 -dc`, `pixz -d`, `pzstd -d -q -c`,
+  `cat`).
+
+## Tar streaming helpers
+
+Used by `analyze-archive.sh` and `convert-to-tarzst.sh`.
+
+| Function | Purpose |
+| --- | --- |
+| `tar_decompress_stream FILE CODEC` | Writes the raw tar payload of a (possibly compressed) tarball to stdout. `xz` goes through `pixz -dk FILE /dev/stdout` — pixz needs a seekable input and an explicit output path. |
+| `tar_list_entries FILE DEST [CODEC]` | Lists member names (one per line) into DEST; dies with the tar error output on failure. |
+| `write_tar_checksum_command DEST` | Writes the `tar --to-command` helper script that hashes each member's bytes and appends `hash⇥path⇥size` records to `$TMP_MANIFEST`. Set `TAR_CMD_VERBOSE=1` for `processing: ...` progress on stderr. |
+| `write_tar_manifest FILE [CODEC] DEST` | Single-pass manifest generation: lists entries, skips directories, feeds names via `--files-from --null`, and appends sorted `hash  path  size` lines to DEST. |
+
+## Path helpers
+
+- `strip_archive_suffixes NAME`: repeatedly strips `.tar.*`, compound
+  short forms (`.tgz`, `.txz`, `.tzst`, ...), split-volume suffixes
+  (`.7z.001`, `.z01`, `.partN.rar`, `.rNN`), and single extensions
+  (`.7z`, `.zip`, `.rar`, `.gz`, ...).
+- `default_basename_path ARCHIVE`: `dir/` + `strip_archive_suffixes(base)`.
+- `default_sha256_path ARCHIVE`: `default_basename_path` + `.sha256`.
+
+## Manifest / misc helpers
+
+- `write_sha256_manifest ROOT DEST`: `find` + `sha256sum` + `stat` over ROOT,
+  appending `hash  path  size` lines sorted by relative path.
+- `prepare_file_for_write FILE APPEND`: truncate FILE unless APPEND is set.
+- `create_temp_dir PREFIX [PARENT]`: `mktemp -d` wrapper.
+- `cleanup_temp_file FILE`: safe `rm -f`.
+- `log MSG`, `die MSG`, `require_cmd CMD`, `validate_file_exists`,
+  `validate_dir_exists`, `confirm_action MSG AUTOCONFIRM ITEMS...`.
+
+## Conventions
+
+- Manifest record on stdout/files: `SHA256␣␣path␣␣size` (two spaces).
+- Internal record passing uses `hash⇥path⇥size` (tabs) and NUL framing
+  (`path⇥size\0` in analyzer listings) — tabs in filenames are safe
+  because size is emitted first; embedded newlines are still not
+  representable in the manifest itself.

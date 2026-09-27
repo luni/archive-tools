@@ -40,18 +40,13 @@ Options:
 EOF
 }
 
-write_sha256_manifest() {
-  local root="$1" dest="$2" file rel hash
-  [[ -z "$dest" ]] && return 0
-  while IFS= read -r -d '' file; do
-    rel="${file#$root/}"
-    if [[ "$rel" == "$file" ]]; then
-      rel="$(basename -- "$file")"
-    fi
-    hash="$(sha256sum -- "$file" | awk '{print $1}')"
-    printf '%s  %s\n' "$hash" "$rel" >>"$dest"
-  done < <(LC_ALL=C find "$root" -type f -print0 | LC_ALL=C sort -z)
+TMP_OUTPUT=""
+cleanup() {
+  if [[ -n "$TMP_OUTPUT" && -f "$TMP_OUTPUT" ]]; then
+    rm -f -- "$TMP_OUTPUT"
+  fi
 }
+trap cleanup EXIT INT TERM
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -144,6 +139,10 @@ if [[ "$SHA256_ENABLED" -eq 1 ]]; then
   prepare_file_for_write "$SHA256_FILE" "$SHA256_APPEND"
 fi
 
+TMP_OUTPUT="$(mktemp -p "$(dirname -- "$OUTPUT")" "$(basename -- "$OUTPUT").tmp.XXXXXX")"
+# mktemp creates the destination path as a file; remove it so pzstd can create it.
+rm -f -- "$TMP_OUTPUT"
+
 log "Creating tar.zst at $OUTPUT from $SOURCE_DIR ..."
 (
   cd "$SOURCE_DIR"
@@ -152,7 +151,14 @@ log "Creating tar.zst at $OUTPUT from $SOURCE_DIR ..."
   else
     tar --numeric-owner -cf - .
   fi
-) | pzstd $PZSTD_LEVEL ${FORCE:+-f} -q -o "$OUTPUT"
+) | pzstd $PZSTD_LEVEL -q -o "$TMP_OUTPUT"
+
+mv -f -- "$TMP_OUTPUT" "$OUTPUT"
+TMP_OUTPUT=""
+
+if ! touch -r "$SOURCE_DIR" "$OUTPUT"; then
+  die "Failed to copy modification time to $OUTPUT"
+fi
 
 if [[ "$SHA256_ENABLED" -eq 1 ]]; then
   write_sha256_manifest "$SOURCE_DIR" "$SHA256_FILE"

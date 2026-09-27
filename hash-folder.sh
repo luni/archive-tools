@@ -61,19 +61,32 @@ prepare_file_for_write "$OUTPUT_FILE"
 
 if command -v hashdeep >/dev/null 2>&1; then
   log "Using hashdeep for faster hashing"
-  hashdeep -l -c sha256 -r "$DIRECTORY" | awk -F, -v dir="$DIRECTORY" '
-    /^#/ || /^%%%%/ || /^sha256[[:space:]]+filename$/ || /^$/ { next }
+  hashdeep -l -c sha256 -r "$DIRECTORY" | awk -v dir="$DIRECTORY" '
+    /^#/ || /^%/ || /^sha256[[:space:]]+filename$/ || /^$/ { next }
     {
-      size = $1
+      # CSV row: size,hash,filename — the filename may be quoted and may
+      # itself contain commas, so split on the first two commas only.
+      p1 = index($0, ",")
+      if (!p1) next
+      p2 = index(substr($0, p1 + 1), ",")
+      if (!p2) next
+      p2 += p1
+      size = substr($0, 1, p1 - 1)
+      hash = substr($0, p1 + 1, p2 - p1 - 1)
+      path = substr($0, p2 + 1)
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", size)
-      path = $3
+      # Strip surrounding quotes and unescape doubled quotes
+      if (substr(path, 1, 1) == "\"" && substr(path, length(path), 1) == "\"") {
+        path = substr(path, 2, length(path) - 2)
+        gsub(/""/, "\"", path)
+      }
       # Remove directory prefix if present
       if (index(path, dir "/") == 1) {
         path = substr(path, length(dir) + 2)
       }
       # Remove leading ./ if present
       gsub(/^\.\//, "", path)
-      print $2 "  " path "  " size
+      print hash "  " path "  " size
     }
   ' >"$OUTPUT_FILE"
 else

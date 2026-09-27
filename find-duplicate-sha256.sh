@@ -41,12 +41,11 @@ SKIP_INTRA_MANIFEST=0
 DELETE_IDENTICAL=0
 AUTO_CONFIRM=0
 
-declare -A HASH_COUNTS=()
-declare -A HASH_LOCATIONS=()
 declare -A SIGNATURE_MANIFESTS=()
 declare -A MANIFEST_ENTRY_COUNTS=()
-declare -A HASH_MANIFEST_SEEN=()
-declare -A HASH_UNIQUE_MANIFEST_COUNT=()
+
+RECORDS_FILE="$(mktemp)"
+trap 'rm -f "$RECORDS_FILE"' EXIT
 
 collect_related_basename_files() {
   local manifest="$1" archive="$2" out_var="$3"
@@ -206,50 +205,49 @@ delete_redundant_manifest() {
   fi
 }
 
-record_entry() {
-  local hash="$1" manifest="$2" entry="$3"
-  HASH_COUNTS["$hash"]=$((${HASH_COUNTS["$hash"]:-0} + 1))
-  if [[ -v HASH_LOCATIONS["$hash"] ]]; then
-    HASH_LOCATIONS["$hash"]+=$'\n'"$manifest$SEP$entry"
-  else
-    HASH_LOCATIONS["$hash"]="$manifest$SEP$entry"
-  fi
-  local combination="$hash$GROUP_SEP$manifest"
-  if [[ ! -v HASH_MANIFEST_SEEN["$combination"] ]]; then
-    HASH_MANIFEST_SEEN["$combination"]=1
-    HASH_UNIQUE_MANIFEST_COUNT["$hash"]=$((${HASH_UNIQUE_MANIFEST_COUNT["$hash"]:-0} + 1))
-  fi
-}
-
 entries_recorded=0
 lines_skipped=0
 
+# Parse one manifest with awk: appends "hash SEP manifest SEP entry" records to
+# RECORDS_FILE and (in --identical-archives mode) "hash SEP entry" pairs to a
+# per-manifest file used for the content signature. Accepts the sha256sum-style
+# "hash  path  size" layout as well as looser "hash path" variants.
 process_manifest() {
-  local manifest="$1" line line_no=0 manifest_entries=0
-  local -a manifest_pairs=()
-  local hash rest entry_path
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    line_no=$((line_no + 1))
-    line="${line%$'\r'}"
-    [[ -z "$line" ]] && continue
-    [[ "$line" =~ ^[[:space:]]*# ]] && continue
-    if [[ "$line" =~ ^([[:xdigit:]]{64})[[:space:]][[:space:]]+(.+)$ ]]; then
-      hash="${BASH_REMATCH[1]}"
-      rest="${BASH_REMATCH[2]}"
-      entry_path="$rest"
-      if [[ "$rest" =~ ^(.*[^[:space:]])[[:space:]][[:space:]]+([0-9]+)$ ]]; then
-        entry_path="${BASH_REMATCH[1]}"
-      fi
-      record_entry "$hash" "$manifest" "$entry_path"
-      manifest_pairs+=("$hash$SEP$entry_path")
-      entries_recorded=$((entries_recorded + 1))
-      manifest_entries=$((manifest_entries + 1))
-    else
-      lines_skipped=$((lines_skipped + 1))
-      printf 'warning: %s:%d not recognized, skipping\n' "$manifest" "$line_no" >&2
-    fi
-  done <"$manifest"
+  local manifest="$1"
+  local pairs_file=""
+  ((IDENTICAL_ONLY)) && pairs_file="$(mktemp)"
 
+  local stats
+  if ! stats="$(awk -v manifest="$manifest" -v sep="$SEP" \
+      -v records="$RECORDS_FILE" -v pairs="$pairs_file" '
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      lineno++
+      if (line == "" || line ~ /^[[:space:]]*#/ || line ~ /^%%/) next
+      if (match(line, /^[[:xdigit:]]{64}[ \t]+[*]?/)) {
+        hash = substr(line, 1, 64)
+        rest = substr(line, RLENGTH + 1)
+        entry = rest
+        if (match(rest, /[ \t][ \t]+[0-9]+$/)) entry = substr(rest, 1, RSTART - 1)
+        print hash sep manifest sep entry >> records
+        if (pairs != "") print hash sep entry >> pairs
+        ok++
+      } else {
+        skipped++
+        printf "warning: %s:%d not recognized, skipping\n", manifest, lineno > "/dev/stderr"
+      }
+    }
+    END { printf "%d %d", ok + 0, skipped + 0 }
+  ' "$manifest")"; then
+    [[ -n "$pairs_file" ]] && rm -f "$pairs_file"
+    die "Failed to parse manifest: $manifest"
+  fi
+
+  local manifest_entries manifest_skipped
+  read -r manifest_entries manifest_skipped <<<"$stats"
+  entries_recorded=$((entries_recorded + manifest_entries))
+  lines_skipped=$((lines_skipped + manifest_skipped))
   MANIFEST_ENTRY_COUNTS["$manifest"]=$manifest_entries
 
   if [[ "$manifest_entries" -eq 0 ]]; then
@@ -258,11 +256,8 @@ process_manifest() {
 
   if ((IDENTICAL_ONLY)); then
     local signature
-    if ((${#manifest_pairs[@]} > 0)); then
-      signature="$(printf '%s\n' "${manifest_pairs[@]}" | LC_ALL=C sort | sha256sum | awk '{print $1}')"
-    else
-      signature="$(printf '' | sha256sum | awk '{print $1}')"
-    fi
+    signature="$(LC_ALL=C sort "$pairs_file" | sha256sum | awk '{print $1}')"
+    rm -f "$pairs_file"
     if [[ -v SIGNATURE_MANIFESTS["$signature"] ]]; then
       SIGNATURE_MANIFESTS["$signature"]+="$GROUP_SEP$manifest"
     else
@@ -338,8 +333,10 @@ if [[ "$manifests_scanned" -eq 0 ]]; then
   die "No .sha256 manifests found under the provided directory set."
 fi
 
+unique_hashes="$(awk -v sep="$SEP" 'BEGIN { FS = sep } { print $1 }' "$RECORDS_FILE" | LC_ALL=C sort -u | wc -l)"
+
 printf 'Scanned %d manifest(s); %d total entries (%d unique hashes). Skipped %d line(s).\n' \
-  "$manifests_scanned" "$entries_recorded" "${#HASH_COUNTS[@]}" "$lines_skipped"
+  "$manifests_scanned" "$entries_recorded" "$unique_hashes" "$lines_skipped"
 
 if ((IDENTICAL_ONLY)); then
   identical_groups_found=0
@@ -401,42 +398,47 @@ if ((IDENTICAL_ONLY)); then
   exit 0
 fi
 
-duplicate_hashes=()
-for hash in "${!HASH_COUNTS[@]}"; do
-  if ((SKIP_INTRA_MANIFEST)); then
-    if ((${HASH_UNIQUE_MANIFEST_COUNT["$hash"]:-0} > 1)); then
-      duplicate_hashes+=("$hash")
-    fi
-  else
-    if ((HASH_COUNTS["$hash"] > 1)); then
-      duplicate_hashes+=("$hash")
-    fi
-  fi
-done
+# Aggregate records grouped by hash (sorted stream): counts occurrences and
+# unique manifests per hash, then prints the duplicate report on the fly.
+duplicate_report="$(
+  LC_ALL=C sort -t "$SEP" -k1,1 -- "$RECORDS_FILE" | awk -v sep="$SEP" -v skip="$SKIP_INTRA_MANIFEST" '
+    BEGIN { prev = ""; cnt = 0; ucnt = 0; n = 0 }
+    function flush(   qualified, shown, i) {
+      if (prev == "") return
+      qualified = skip ? (ucnt > 1) : (cnt > 1)
+      if (!qualified) return
+      printf "\nSHA256 %s (%d occurrences):\n", prev, (skip ? ucnt : cnt)
+      for (i = 1; i <= n; i++) {
+        if (skip) {
+          if (man[i] in shown) continue
+          shown[man[i]] = 1
+        }
+        printf "  - %s :: %s\n", man[i], ent[i]
+      }
+    }
+    {
+      p1 = index($0, sep)
+      rest = substr($0, p1 + 1)
+      p2 = index(rest, sep)
+      h = substr($0, 1, p1 - 1)
+      m = substr(rest, 1, p2 - 1)
+      e = substr(rest, p2 + 1)
+      if (h != prev) {
+        flush()
+        prev = h; cnt = 0; ucnt = 0; n = 0
+        delete seenm; delete man; delete ent
+      }
+      cnt++
+      if (!(m in seenm)) { seenm[m] = 1; ucnt++ }
+      n++; man[n] = m; ent[n] = e
+    }
+    END { flush() }
+  '
+)"
 
-if [[ "${#duplicate_hashes[@]}" -eq 0 ]]; then
+if [[ -z "$duplicate_report" ]]; then
   printf 'No duplicate SHA-256 entries found.\n'
   exit 0
 fi
 
-printf '\nDuplicate SHA-256 digests:\n'
-IFS=$'\n' read -r -d '' -a duplicate_hashes < <(printf '%s\n' "${duplicate_hashes[@]}" | LC_ALL=C sort && printf '\0')
-
-for hash in "${duplicate_hashes[@]}"; do
-  display_count="${HASH_COUNTS["$hash"]}"
-  if ((SKIP_INTRA_MANIFEST)); then
-    display_count="${HASH_UNIQUE_MANIFEST_COUNT["$hash"]:-0}"
-  fi
-  printf '\nSHA256 %s (%d occurrences):\n' "$hash" "$display_count"
-  printed_manifest_list=""
-  while IFS= read -r location || [[ -n "$location" ]]; do
-    IFS=$SEP read -r manifest entry <<<"$location"
-    if ((SKIP_INTRA_MANIFEST)); then
-      if [[ ":$printed_manifest_list:" == *":$manifest:"* ]]; then
-        continue
-      fi
-      printed_manifest_list="${printed_manifest_list:+$printed_manifest_list:}$manifest"
-    fi
-    printf '  - %s :: %s\n' "$manifest" "$entry"
-  done <<<"${HASH_LOCATIONS["$hash"]}"
-done
+printf '\nDuplicate SHA-256 digests:%s\n' "$duplicate_report"

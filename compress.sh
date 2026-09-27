@@ -25,6 +25,7 @@ ZSTD_LEVEL="$DEFAULT_ZSTD_LEVEL"
 PZSTD_LEVEL="$DEFAULT_PZSTD_LEVEL"
 
 QUIET=0
+KEEP_SOURCE=0
 EXTENSIONS=(tar sql txt csv ibd xlsx docx log)
 EXTENSIONS_CUSTOMIZED=0
 
@@ -53,6 +54,9 @@ Options:
       --ext EXT           Add an extension (without leading dot) to the scan list.
                           May be repeated; first use replaces the defaults.
 
+  -k, --keep              Keep original files after successful compression
+                          (default: originals are removed once the compressed
+                          output is in place)
   -q, --quiet             Less logging
   -h, --help              Show help
 EOF
@@ -183,6 +187,10 @@ while [[ $# -gt 0 ]]; do
     done
     shift 2
     ;;
+  -k | --keep | --keep-source)
+    KEEP_SOURCE=1
+    shift
+    ;;
   -q | --quiet)
     QUIET=1
     shift
@@ -202,6 +210,24 @@ while [[ $# -gt 0 ]]; do
     ;;
   esac
 done
+
+# Validate required tools before doing any work
+require_cmd parallel
+require_cmd file
+case "$SMALL_COMPRESSOR" in
+xz) require_cmd xz ;;
+zstd) require_cmd zstd ;;
+*) die "SMALL_COMPRESSOR must be xz or zstd" ;;
+esac
+case "$BIG_COMPRESSOR" in
+pixz) require_cmd pixz ;;
+xz) require_cmd xz ;;
+pzstd) require_cmd pzstd ;;
+zstd) require_cmd zstd ;;
+*) die "BIG_COMPRESSOR must be pixz, xz, pzstd, or zstd" ;;
+esac
+[[ -n "$SHA1_FILE" ]] && require_cmd sha1sum
+[[ -n "$SHA256_FILE" ]] && require_cmd sha256sum
 
 # Create/truncate checksum files up front (if requested)
 if [[ -n "$SHA256_FILE" && "$SHA256_APPEND" -eq 1 && -e "$SHA256_FILE" && ! -s "$SHA256_FILE" ]]; then
@@ -315,7 +341,7 @@ compress_small() {
 
   touch -r "$f" "$tmp"
   mv -f -- "$tmp" "$out"
-  rm -f -- "$f"
+  [[ "$KEEP_SOURCE" -eq 0 ]] && rm -f -- "$f"
 
   emit_checksum_lines "$sha1_line" "$sha256_line"
 }
@@ -401,14 +427,14 @@ compress_big_seq() {
 
   touch -r "$f" "$tmp"
   mv -f -- "$tmp" "$out"
-  rm -f -- "$f"
+  [[ "$KEEP_SOURCE" -eq 0 ]] && rm -f -- "$f"
 
   [[ -n "$sha1_line" ]] && append_checksum_line sha1 "$sha1_line"
   [[ -n "$sha256_line" ]] && append_checksum_line sha256 "$sha256_line"
 }
 
 export -f compress_small compress_big_seq out_name emit_checksum_lines append_checksum_line log skip_if_already_compressed detect_actual_format get_expected_extension get_compression_extension get_compressor_command
-export SMALL_COMPRESSOR BIG_COMPRESSOR BIG_JOBS XZ_LEVEL ZSTD_LEVEL PZSTD_LEVEL QUIET SHA1_FILE SHA256_FILE CHECKSUM_DELIM REMOVE_SOURCE
+export SMALL_COMPRESSOR BIG_COMPRESSOR BIG_JOBS XZ_LEVEL ZSTD_LEVEL PZSTD_LEVEL QUIET SHA1_FILE SHA256_FILE CHECKSUM_DELIM KEEP_SOURCE
 
 small_list="$(mktemp)"
 big_list="$(mktemp)"
@@ -427,7 +453,7 @@ for i in "${!EXTENSIONS[@]}"; do
   if [[ "$i" -gt 0 ]]; then
     ext_pred+=("-o")
   fi
-  ext_pred+=("-name" "*.${ext}")
+  ext_pred+=("-iname" "*.${ext}")
 done
 
 if [[ "${#ext_pred[@]}" -eq 0 ]]; then
@@ -436,7 +462,8 @@ if [[ "${#ext_pred[@]}" -eq 0 ]]; then
 fi
 
 find "$SCAN_DIR" -type f \( "${ext_pred[@]}" \) \
-  ! -name '*.zst' ! -name '*.tzst' ! -name '*.xz' ! -name '*.txz' -print0 |
+  ! -iname '*.zst' ! -iname '*.tzst' ! -iname '*.xz' ! -iname '*.txz' \
+  ! -iname '*.gz' ! -iname '*.tgz' ! -iname '*.bz2' ! -iname '*.tbz' ! -iname '*.tbz2' -print0 |
   while IFS= read -r -d '' f; do
     if [[ "$(stat -c '%s' -- "$f" 2>/dev/null || stat -f '%z' -- "$f")" -lt "$THRESHOLD_BYTES" ]]; then
       printf '%s\0' "$f" >>"$small_list"

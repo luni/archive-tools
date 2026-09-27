@@ -7,7 +7,7 @@ source "${SCRIPT_DIR}/common.sh"
 
 tmp_manifest=""
 tmp_tar_entries=""
-tmp_tar_command=""
+tmp_entries_list=""
 
 cleanup() {
   if [[ -n "$tmp_manifest" && -f "$tmp_manifest" ]]; then
@@ -16,8 +16,8 @@ cleanup() {
   if [[ -n "$tmp_tar_entries" && -f "$tmp_tar_entries" ]]; then
     rm -f "$tmp_tar_entries"
   fi
-  if [[ -n "$tmp_tar_command" && -f "$tmp_tar_command" ]]; then
-    rm -f "$tmp_tar_command"
+  if [[ -n "$tmp_entries_list" && -f "$tmp_entries_list" ]]; then
+    rm -f "$tmp_entries_list"
   fi
 }
 
@@ -35,7 +35,10 @@ Options:
   -o, --output FILE   Target SHA-256 manifest (default: ARCHIVE basename + .sha256)
   -q, --quiet         Suppress progress logs
       --overwrite     Overwrite existing manifest if present
-  -p, --password PWD  Password for encrypted archives (default: INVALID_PASSWORD)
+  -p, --password PWD  Password for encrypted archives (default: INVALID_PASSWORD,
+                        or set the ARCHIVE_PASSWORD environment variable). The
+                        password is passed to the archiver's command line and may
+                        be visible in process listings.
   -h, --help          Show this help message
 EOF
 }
@@ -43,14 +46,17 @@ EOF
 
 parse_7z_listing() {
   local listing_tmp="$1"
-  local line path attrs started=0
+  local line="" path="" attrs="" size="" folder="" started=0
 
   flush_entry() {
-    if [[ -n "$path" && "$attrs" != *D* ]]; then
-      printf '%s\0' "$path"
+    if [[ -n "$path" && "$attrs" != *D* && "$folder" != "+" && "$path" != */ ]]; then
+      # size first: a path containing a tab still lands intact in the last field
+      printf '%s\t%s\0' "$size" "$path"
     fi
     path=""
     attrs=""
+    size=""
+    folder=""
   }
 
   while IFS= read -r line; do
@@ -76,6 +82,10 @@ parse_7z_listing() {
       path="${line#Path = }"
     elif [[ "$line" == Attributes\ =\ * ]]; then
       attrs="${line#Attributes = }"
+    elif [[ "$line" == Size\ =\ * ]]; then
+      size="${line#Size = }"
+    elif [[ "$line" == Folder\ =\ * ]]; then
+      folder="${line#Folder = }"
     fi
   done <"$listing_tmp"
 
@@ -88,7 +98,7 @@ list_archive_files_7z() {
   local listing_tmp listing_output
 
   listing_tmp="$(mktemp)"
-  if ! "$SEVENZ_BIN" l -slt -- "$archive" >"$listing_tmp" 2>&1; then
+  if ! "$SEVENZ_BIN" l -slt -p"$ARCHIVE_PASSWORD" -- "$archive" >"$listing_tmp" 2>&1; then
     listing_output="$(cat "$listing_tmp")"
     rm -f "$listing_tmp"
     if [[ -n "$listing_output" ]]; then
@@ -101,71 +111,10 @@ list_archive_files_7z() {
 }
 
 
-process_tar_archive() {
-  local archive="$1" entries_file="$2" command_file="$3"
-  local compression_cmd
-  compression_cmd="$(get_decompression_command "$TAR_COMPRESSION")"
-  if [[ "$compression_cmd" == "unknown" ]]; then
-    compression_cmd="cat"
-  fi
-
-  if [[ "$TAR_COMPRESSION" == "none" ]]; then
-    if ! tar --null --files-from="$entries_file" --to-command="$command_file" -xf "$archive"; then
-      die "Failed to process tar entries"
-    fi
-  else
-    if ! cat "$archive" | $compression_cmd | tar --null --files-from="$entries_file" --to-command="$command_file" -xf -; then
-      die "Failed to process tar entries"
-    fi
-  fi
-}
-
-tar_list_entries() {
-  local archive="$1" dest="$2"
-
-  run_tar_list() {
-    local tar_base=(tar --quoting-style=literal --show-transformed-names -tf)
-    case "$TAR_COMPRESSION" in
-      gz)
-        pigz -dc -- "$archive" | "${tar_base[@]}" -
-        ;;
-      bz2)
-        pbzip2 -dc -- "$archive" | "${tar_base[@]}" -
-        ;;
-      xz)
-        pixz -d -c -- "$archive" | "${tar_base[@]}" -
-        ;;
-      zst)
-        pzstd -d -q -c -- "$archive" | "${tar_base[@]}" -
-        ;;
-      none)
-        "${tar_base[@]}" "$archive"
-        ;;
-    esac
-  }
-
-  if ! run_tar_list >"$dest" 2>&1; then
-    cat "$dest" >&2
-    rm -f "$dest"
-    die "Failed to list tar entries for $archive"
-  fi
-}
-
-tar_extract_entry() {
-  local archive="$1" entry="$2"
-  case "$TAR_COMPRESSION" in
-    gz) pigz -dc -- "$archive" | tar -xOf - -- "$entry" ;;
-    bz2) pbzip2 -dc -- "$archive" | tar -xOf - -- "$entry" ;;
-    xz) pixz -d -c -- "$archive" | tar -xOf - -- "$entry" ;;
-    zst) pzstd -d -q -c -- "$archive" | tar -xOf - -- "$entry" ;;
-    none) tar -xOf "$archive" -- "$entry" ;;
-  esac
-}
-
 list_archive_files_tar() {
   local archive="$1" entry listing_tmp
   listing_tmp="$(mktemp)"
-  tar_list_entries "$archive" "$listing_tmp"
+  tar_list_entries "$archive" "$listing_tmp" "$TAR_COMPRESSION"
   while IFS= read -r entry; do
     [[ -z "$entry" ]] && continue
     [[ "$entry" == */ ]] && continue
@@ -179,7 +128,7 @@ list_archive_files_zip() {
   local listing_tmp
 
   listing_tmp="$(mktemp)"
-  if ! "$SEVENZ_BIN" l -slt -- "$archive" >"$listing_tmp" 2>&1; then
+  if ! "$SEVENZ_BIN" l -slt -p"$ARCHIVE_PASSWORD" -- "$archive" >"$listing_tmp" 2>&1; then
     cat "$listing_tmp" >&2
     rm -f "$listing_tmp"
     die "Failed to list zip entries for $archive"
@@ -189,10 +138,10 @@ list_archive_files_zip() {
 }
 
 list_archive_files_rar() {
-  local archive="$1" entry line entry_type
+  local archive="$1" entry="" entry_type="" entry_size="" line
   local listing_tmp
   listing_tmp="$(mktemp)"
-  if ! unrar lt -- "$archive" >"$listing_tmp" 2>&1; then
+  if ! unrar lt -p"$ARCHIVE_PASSWORD" -- "$archive" >"$listing_tmp" 2>&1; then
     cat "$listing_tmp" >&2
     rm -f "$listing_tmp"
     die "Failed to list rar entries for $archive"
@@ -206,34 +155,37 @@ list_archive_files_rar() {
   fi
 
   # Parse unrar lt output which has a clean key: value format
-  # We need to track both Name and Type fields for each entry
-  while IFS= read -r line; do
-    # Look for lines that start with "Name:" and extract the filename
-    if [[ "$line" =~ ^[[:space:]]*Name:[[:space:]]*(.+)$ ]]; then
-      entry="${BASH_REMATCH[1]}"
-      continue
+  # Track Name, Type and Size for each entry and emit "size\tname" per file
+  flush_entry() {
+    if [[ -n "$entry" && "$entry_type" == "File" ]]; then
+      printf '%s\t%s\0' "$entry_size" "$entry"
     fi
+    entry=""
+    entry_type=""
+    entry_size=""
+  }
 
-    # Look for lines that start with "Type:" to determine if it's a file
-    if [[ "$line" =~ ^[[:space:]]*Type:[[:space:]]*(.+)$ ]]; then
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    if [[ "$line" =~ ^[[:space:]]*Name:[[:space:]]*(.+)$ ]]; then
+      flush_entry
+      entry="${BASH_REMATCH[1]}"
+    elif [[ "$line" =~ ^[[:space:]]*Type:[[:space:]]*(.+)$ ]]; then
       entry_type="${BASH_REMATCH[1]}"
-
-      # Only process if we have a name and it's a file (not directory)
-      if [[ -n "$entry" && "$entry_type" == "File" ]]; then
-        printf '%s\0' "$entry"
-      fi
-
-      # Reset entry for next iteration
-      entry=""
+    elif [[ "$line" =~ ^[[:space:]]*Size:[[:space:]]*([0-9]+) ]]; then
+      entry_size="${BASH_REMATCH[1]}"
+    elif [[ -z "$line" ]]; then
+      flush_entry
     fi
   done <"$listing_tmp"
   rm -f "$listing_tmp"
+  flush_entry
 }
 
 list_archive_files() {
   case "$ARCHIVE_TYPE" in
     7z) list_archive_files_7z "$ARCHIVE" ;;
-    tar|tar.gz|tar.xz|tar.bz2) list_archive_files_tar "$ARCHIVE" ;;
+    tar|tar.gz|tar.xz|tar.bz2|tar.zst) list_archive_files_tar "$ARCHIVE" ;;
     zip) list_archive_files_zip "$ARCHIVE" ;;
     rar) list_archive_files_rar "$ARCHIVE" ;;
     *)
@@ -242,43 +194,22 @@ list_archive_files() {
   esac
 }
 
-
-
-stream_entry() {
-  local archive="$1" entry="$2"
+# Stream every file's contents in archive order in a single pass. Pairs with
+# the ordered "size<TAB>path" listings produced by the list_archive_files_*
+# helpers; each entry is framed from the stream with head -c <size>.
+stream_all_entries() {
+  local archive="$1"
   case "$ARCHIVE_TYPE" in
-    7z)
-      "$SEVENZ_BIN" x -so -p"$ARCHIVE_PASSWORD" -- "$archive" "$entry"
-      ;;
-    tar|tar.gz|tar.xz|tar.bz2)
-      tar_extract_entry "$archive" "$entry"
-      ;;
-    zip)
-      "$SEVENZ_BIN" x -so -p"$ARCHIVE_PASSWORD" -- "$archive" "$entry"
+    7z|zip)
+      "$SEVENZ_BIN" x -so -p"$ARCHIVE_PASSWORD" -- "$archive"
       ;;
     rar)
-      unrar p -idq -p"$ARCHIVE_PASSWORD" -- "$archive" "$entry"
+      unrar p -idq -p"$ARCHIVE_PASSWORD" -- "$archive"
       ;;
     *)
       die "Unsupported archive type for streaming: $ARCHIVE_TYPE"
       ;;
   esac
-}
-
-compute_sha256_and_size() {
-  local archive="$1" entry="$2"
-  local tmp_size hash size
-  tmp_size="$(mktemp)"
-  if ! hash="$(stream_entry "$archive" "$entry" | tee >(wc -c | awk '{print $1}' >"$tmp_size") | sha256sum | awk '{print $1}')"; then
-    rm -f "$tmp_size"
-    return 1
-  fi
-  if ! read -r size <"$tmp_size"; then
-    rm -f "$tmp_size"
-    return 1
-  fi
-  rm -f "$tmp_size"
-  printf '%s\t%s\n' "$hash" "$size"
 }
 
 ARCHIVE=""
@@ -288,7 +219,7 @@ OVERWRITE=0
 ARCHIVE_TYPE="7z"
 SEVENZ_BIN="7z"
 TAR_COMPRESSION="none"
-ARCHIVE_PASSWORD="INVALID_PASSWORD"
+ARCHIVE_PASSWORD="${ARCHIVE_PASSWORD:-INVALID_PASSWORD}"
 
 setup_archive_tools() {
   case "$ARCHIVE_TYPE" in
@@ -298,18 +229,17 @@ setup_archive_tools() {
     rar)
       require_cmd unrar
       ;;
-    tar|tar.gz|tar.xz|tar.bz2)
+    tar|tar.gz|tar.xz|tar.bz2|tar.zst)
       require_cmd tar
       TAR_COMPRESSION="$(detect_tar_compression "$ARCHIVE")"
-      local filter_tool
-      filter_tool="$(get_decompression_command "$TAR_COMPRESSION")"
-      if [[ "$filter_tool" == "unknown" ]]; then
-        filter_tool="cat"
-      fi
-      filter_tool="$(echo "$filter_tool" | awk '{print $1}')"
-      if [[ "$filter_tool" != "cat" ]]; then
-        require_cmd "$filter_tool"
-      fi
+      case "$TAR_COMPRESSION" in
+        gz) require_cmd pigz ;;
+        bz2) require_cmd pbzip2 ;;
+        xz) require_cmd pixz ;;
+        zst) require_cmd pzstd ;;
+        none) ;;
+        *) die "Unsupported tar compression '$TAR_COMPRESSION'" ;;
+      esac
       ;;
     *)
       die "Archive type '$ARCHIVE_TYPE' is not supported."
@@ -403,14 +333,12 @@ fi
 
 mkdir -p -- "$(dirname -- "$OUTPUT_FILE")"
 tmp_manifest="$(mktemp)"
-TMP_MANIFEST="$tmp_manifest"
-export TMP_MANIFEST
 trap cleanup EXIT
 
 log "Writing SHA-256 manifest to $OUTPUT_FILE"
 
 # Optimization for tar files - process all entries in a single decompression pass
-if [[ "$ARCHIVE_TYPE" == "tar" || "$ARCHIVE_TYPE" == "tar.gz" || "$ARCHIVE_TYPE" == "tar.xz" || "$ARCHIVE_TYPE" == "tar.bz2" ]]; then
+if [[ "$ARCHIVE_TYPE" == "tar" || "$ARCHIVE_TYPE" == tar.* ]]; then
   files_processed=0
   log "Using optimized tar processing"
   tmp_tar_entries="$(mktemp)"
@@ -422,36 +350,16 @@ if [[ "$ARCHIVE_TYPE" == "tar" || "$ARCHIVE_TYPE" == "tar.gz" || "$ARCHIVE_TYPE"
   done <"$tmp_tar_entries"
 
   if [[ "$files_processed" -gt 0 ]]; then
-    tmp_tar_command="$(mktemp)"
-    cat >"$tmp_tar_command" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-f="${TAR_FILENAME:-}"
-if [[ -z "$f" || "$f" == */ ]]; then
-  exit 0
-fi
-printf 'processing: %s\n' "$f" >&2
-tmp_size="$(mktemp)"
-if ! hash="$(tee >(wc -c | awk '{print $1}' >"$tmp_size") | sha256sum | awk '{print $1}')"; then
-  rm -f "$tmp_size"
-  exit 1
-fi
-if ! read -r size <"$tmp_size"; then
-  size=0
-fi
-rm -f "$tmp_size"
-if [[ -n "${TMP_MANIFEST:-}" ]]; then
-  printf '%s\t%s\t%s\n' "$hash" "$f" "$size" >>"$TMP_MANIFEST"
-fi
-printf '%s  %s  %s\n' "$hash" "$f" "$size"
-EOF
-    chmod +x "$tmp_tar_command"
-
     log "Processing $files_processed file(s) in a single pass"
-    process_tar_archive "$ARCHIVE" "$tmp_tar_entries" "$tmp_tar_command"
+    export TAR_CMD_VERBOSE=1
+    : >"$OUTPUT_FILE"
+    if ! write_tar_manifest "$ARCHIVE" "$TAR_COMPRESSION" "$OUTPUT_FILE"; then
+      die "Failed to process tar entries"
+    fi
   fi
 else
-  # Fallback processing for archive types without streaming optimizations
+  # 7z/zip/rar: stream the whole archive once and frame each entry out of the
+  # stream with head -c using the sizes captured in the archive listing.
   files_processed=0
   tmp_entries_list="$(mktemp)"
   if ! list_archive_files "$ARCHIVE" >"$tmp_entries_list"; then
@@ -459,28 +367,52 @@ else
     die "Failed to enumerate archive entries for $ARCHIVE"
   fi
 
-  while IFS= read -r -d '' entry; do
+  log "Streaming archive contents in a single pass"
+  exec {DATA_FD}< <(stream_all_entries "$ARCHIVE")
+  stream_pid=$!
+
+  while IFS=$'\t' read -r -d '' entry_size entry; do
     files_processed=$((files_processed + 1))
     log "processing: $entry"
-    if ! result="$(compute_sha256_and_size "$ARCHIVE" "$entry")"; then
-      rm -f "$tmp_entries_list"
+    if [[ ! "$entry_size" =~ ^[0-9]+$ ]]; then
+      die "Failed to determine entry size for '$entry' in $ARCHIVE"
+    fi
+    tmp_size="$(mktemp)"
+    if ! hash="$(head -c "$entry_size" <&"$DATA_FD" | tee >(wc -c | awk '{print $1}' >"$tmp_size") | sha256sum | awk '{print $1}')"; then
+      rm -f "$tmp_size"
       die "Failed to compute SHA-256 for $entry"
     fi
-    hash="${result%%$'\t'*}"
-    size="${result#*$'\t'}"
-    if [[ "$size" == "$hash" ]]; then
-      size=""
+    actual_size="$(cat "$tmp_size")"
+    rm -f "$tmp_size"
+    if [[ "$actual_size" != "$entry_size" ]]; then
+      die "Failed to compute SHA-256 for $entry (expected $entry_size bytes, read $actual_size)"
     fi
-    printf '%s\t%s\t%s\n' "$hash" "$entry" "$size" >>"$tmp_manifest"
-    printf '%s  %s  %s\n' "$hash" "$entry" "$size"
+    printf '%s\t%s\t%s\n' "$hash" "$entry" "$entry_size" >>"$tmp_manifest"
+    printf '%s  %s  %s\n' "$hash" "$entry" "$entry_size"
   done <"$tmp_entries_list"
   rm -f "$tmp_entries_list"
+  tmp_entries_list=""
+
+  # Leftover bytes are expected for split RAR volumes: `unrar lt` only lists
+  # entries that begin in the queried volume, while `unrar p` streams them all.
+  leftover_bytes="$(head -c 1 <&"$DATA_FD" | wc -c)"
+  exec {DATA_FD}<&-
+  stream_rc=0
+  wait "$stream_pid" 2>/dev/null || stream_rc=$?
+  if [[ "$leftover_bytes" -gt 0 ]]; then
+    log "note: archive stream contained entries beyond the listing (split archive?)"
+  elif [[ "$stream_rc" -ne 0 ]]; then
+    die "Streaming archive contents failed for $ARCHIVE"
+  fi
+
+  if [[ "$files_processed" -gt 0 ]]; then
+    LC_ALL=C sort -t $'\t' -k2,2 "$tmp_manifest" | awk -F $'\t' '{printf "%s  %s  %s\n", $1, $2, $3}' >"$OUTPUT_FILE"
+  fi
 fi
 
 if [[ "$files_processed" -eq 0 ]]; then
   log "No files found inside archive."
   rm -f -- "$OUTPUT_FILE"
 else
-  LC_ALL=C sort -t $'\t' -k2,2 "$tmp_manifest" | awk -F $'\t' '{printf "%s  %s  %s\n", $1, $2, $3}' >"$OUTPUT_FILE"
   log "Processed $files_processed file(s)."
 fi

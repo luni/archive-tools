@@ -10,7 +10,9 @@ QUIET=0
 REMOVE_COMPRESSED=0
 OVERWRITE=0
 CUSTOM_COMPRESSORS=0
+JOBS=1
 SUPPORTED_COMPRESSORS=(pixz pzstd pigz pbzip2)
+SUPPORTED_COMPRESSORS_STR="${SUPPORTED_COMPRESSORS[*]}"
 MAGIC_ONLY_EXTENSIONS=(zip rar 7z)
 
 usage() {
@@ -23,6 +25,8 @@ Options:
   -c, --compressor NAME     Limit to a decompressor (pixz, pzstd, pigz, pbzip2).
                             May be repeated or receive a comma-separated list.
                             First use replaces defaults.
+  -j, --jobs N              Decompress up to N files in parallel via GNU
+                            parallel (default: 1, sequential).
   -r, --remove-source       Delete the compressed file after a successful restore.
   -q, --quiet               Suppress info logs.
       --overwrite           Overwrite existing files (do not skip).
@@ -32,7 +36,8 @@ EOF
 
 compressor_enabled() {
   local needle="$1"
-  for c in "${SUPPORTED_COMPRESSORS[@]}"; do
+  local c
+  for c in ${SUPPORTED_COMPRESSORS_STR:-${SUPPORTED_COMPRESSORS[*]}}; do
     [[ "$c" == "$needle" ]] && return 0
   done
   return 1
@@ -81,6 +86,10 @@ while [[ $# -gt 0 ]]; do
     add_compressors "$2"
     shift 2
     ;;
+  -j | --jobs)
+    JOBS="$2"
+    shift 2
+    ;;
   -r | --remove-source | --remove-compressed)
     REMOVE_COMPRESSED=1
     shift
@@ -107,6 +116,15 @@ done
 
 if [[ "${#SUPPORTED_COMPRESSORS[@]}" -eq 0 ]]; then
   die "At least one decompressor must be enabled (pixz, pzstd, pigz, or pbzip2)."
+fi
+
+SUPPORTED_COMPRESSORS_STR="${SUPPORTED_COMPRESSORS[*]}"
+
+if [[ ! "$JOBS" =~ ^[0-9]+$ || "$JOBS" -lt 1 ]]; then
+  die "--jobs must be a positive integer (got: $JOBS)"
+fi
+if [[ "$JOBS" -gt 1 ]]; then
+  require_cmd parallel
 fi
 
 for comp in "${SUPPORTED_COMPRESSORS[@]}"; do
@@ -269,14 +287,24 @@ decompress_file() {
   fi
 }
 
-found_any=0
-while IFS= read -r -d '' file; do
-  found_any=1
-  if ! decompress_file "$file"; then
-    log "error: failed to decompress $file (continuing...)"
-  fi
-done < <(find "$SCAN_DIR" -type f \( "${ext_pred[@]}" \) -print0)
+decompress_job() {
+  decompress_file "$1" || log "error: failed to decompress $1 (continuing...)"
+}
 
-if [[ "$found_any" -eq 0 ]]; then
+file_list="$(mktemp)"
+trap 'rm -f "$file_list"' EXIT
+
+find "$SCAN_DIR" -type f \( "${ext_pred[@]}" \) -print0 >"$file_list"
+
+if [[ ! -s "$file_list" ]]; then
   log "No matching compressed files under $SCAN_DIR"
+elif [[ "$JOBS" -gt 1 ]]; then
+  export -f decompress_job decompress_file rename_misnamed_file detect_actual_format \
+    get_expected_extension log compressor_enabled
+  export QUIET OVERWRITE REMOVE_COMPRESSED SUPPORTED_COMPRESSORS_STR
+  parallel -0 --no-run-if-empty -j "$JOBS" decompress_job {} :::: "$file_list"
+else
+  while IFS= read -r -d '' file; do
+    decompress_job "$file"
+  done <"$file_list"
 fi

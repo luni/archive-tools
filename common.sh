@@ -61,7 +61,7 @@ is_first_chunk() {
 	local archive="$1"
 	local lowered="${archive,,}"
 	case "$lowered" in
-	*.001 | *.part01.rar | *.part1.rar | *.r01) return 0 ;;
+	*.001 | *.part1.rar | *.part01.rar | *.part001.rar) return 0 ;;
 	*) return 1 ;;
 	esac
 }
@@ -73,23 +73,26 @@ detect_archive_type() {
 	*.7z | *.7z.001)
 		printf '7z'
 		;;
-	*.tar.gz | *.tgz)
+	*.zip | *.zip.001 | *.z01)
+		printf 'zip'
+		;;
+	*.rar | *.rar.001 | *.part[0-9].rar | *.part[0-9][0-9].rar | *.part[0-9][0-9][0-9].rar)
+		printf 'rar'
+		;;
+	*.tar.gz | *.tgz | *.taz)
 		printf 'tar.gz'
 		;;
-	*.tar.xz | *.txz)
+	*.tar.xz | *.txz | *.tlz)
 		printf 'tar.xz'
 		;;
 	*.tar.bz2 | *.tbz | *.tbz2)
 		printf 'tar.bz2'
 		;;
-	*.tar | *.tar.* | *.tgz | *.tbz | *.tbz2 | *.txz | *.tlz | *.taz | *.tar.gz | *.tar.xz | *.tar.zst | *.tar.bz2 | *.tzst)
+	*.tar.zst | *.tzst)
+		printf 'tar.zst'
+		;;
+	*.tar | *.tar.*)
 		printf 'tar'
-		;;
-	*.zip | *.zip.001 | *.z01)
-		printf 'zip'
-		;;
-	*.rar | *.rar.001 | *.part[0-9][0-9].rar | *.part[0-9][0-9][0-9].rar)
-		printf 'rar'
 		;;
 	*)
 		printf 'unknown'
@@ -133,7 +136,7 @@ get_decompression_command() {
 	zst)
 		echo "pzstd -d -q -c"
 		;;
-	cat)
+	cat | none)
 		echo "cat"
 		;;
 	*)
@@ -276,7 +279,7 @@ get_expected_extension() {
 	*.tzst) echo "zst" ;;
 	*.tbz | *.tbz2) echo "bz2" ;;
 	*.zip | *.zip.001 | *.z01) echo "zip" ;;
-	*.rar | *.rar.001 | *.part[0-9][0-9].rar | *.part[0-9][0-9][0-9].rar) echo "rar" ;;
+	*.rar | *.rar.001 | *.part[0-9].rar | *.part[0-9][0-9].rar | *.part[0-9][0-9][0-9].rar) echo "rar" ;;
 	*.7z | *.7z.001) echo "7z" ;;
 	*) echo "unknown" ;;
 	esac
@@ -315,8 +318,6 @@ rename_misnamed_file() {
 			log "magic: skipping rename $file -> $new_name (target already exists)"
 			return 1
 		fi
-
-		log "magic: DEBUG - target $new_name does not exist, proceeding with rename"
 
 		log "magic: renaming misnamed file $file -> $new_name (actual format: tar archive)"
 		mv -- "$file" "$new_name"
@@ -475,4 +476,112 @@ validate_file_exists() {
 validate_dir_exists() {
 	local dir="$1"
 	[[ -d "$dir" ]] || die "Directory not found: $dir"
+}
+
+# Stream a (possibly compressed) tar archive's raw tar data to stdout.
+# compression: gz | bz2 | xz | zst | none (see detect_tar_compression)
+tar_decompress_stream() {
+	local archive="$1" compression="${2:-none}"
+	case "$compression" in
+	gz)
+		pigz -dc -- "$archive"
+		;;
+	bz2)
+		pbzip2 -dc -- "$archive"
+		;;
+	xz)
+		# pixz requires a seekable input file and an explicit output path;
+		# "-c" is ignored and "-d in.xz" alone would overwrite/remove inputs.
+		pixz -dk -- "$archive" /dev/stdout
+		;;
+	zst)
+		pzstd -d -q -c -- "$archive"
+		;;
+	none | "")
+		cat -- "$archive"
+		;;
+	*)
+		die "Unknown tar compression: $compression"
+		;;
+	esac
+}
+
+# List all member names of a tar archive (one per line) into $2.
+tar_list_entries() {
+	local archive="$1" dest="$2" compression="${3:-none}"
+
+	if ! tar_decompress_stream "$archive" "$compression" |
+		tar --quoting-style=literal --show-transformed-names -tf - >"$dest" 2>&1; then
+		cat "$dest" >&2
+		rm -f "$dest"
+		die "Failed to list tar entries for $archive"
+	fi
+}
+
+# Write the helper script used with tar --to-command: hashes each member's
+# content (SHA-256 + byte count), appends "hash<TAB>path<TAB>size" to
+# $TMP_MANIFEST and echoes "hash  path  size" to stdout for live progress.
+# Set TAR_CMD_VERBOSE=1 to also log "processing: <path>" to stderr.
+write_tar_checksum_command() {
+	local dest="$1"
+	cat >"$dest" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+f="${TAR_FILENAME:-}"
+if [[ -z "$f" || "$f" == */ ]]; then
+	exit 0
+fi
+if [[ -n "${TAR_CMD_VERBOSE:-}" ]]; then
+	printf 'processing: %s\n' "$f" >&2
+fi
+tmp_size="$(mktemp)"
+if ! hash="$(tee >(wc -c | awk '{print $1}' >"$tmp_size") | sha256sum | awk '{print $1}')"; then
+	rm -f "$tmp_size"
+	exit 1
+fi
+if ! read -r size <"$tmp_size"; then
+	size=0
+fi
+rm -f "$tmp_size"
+if [[ -n "${TMP_MANIFEST:-}" ]]; then
+	printf '%s\t%s\t%s\n' "$hash" "$f" "$size" >>"$TMP_MANIFEST"
+fi
+printf '%s  %s  %s\n' "$hash" "$f" "$size"
+EOF
+	chmod +x "$dest"
+}
+
+# Hash every regular file inside a tar archive in a single decompression pass.
+# Appends sorted "hash  path  size" lines to $3. Progress lines stay on stdout.
+write_tar_manifest() {
+	local archive="$1" compression="${2:-none}" dest="$3"
+	[[ -z "$dest" ]] && return 0
+
+	local tmp_entries tmp_files tmp_command tmp_manifest
+	tmp_entries="$(mktemp)"
+	tmp_files="$(mktemp)"
+	tmp_command="$(mktemp)"
+	tmp_manifest="$(mktemp)"
+
+	tar_list_entries "$archive" "$tmp_entries" "$compression"
+	local entry
+	while IFS= read -r entry; do
+		[[ -z "$entry" ]] && continue
+		[[ "$entry" == */ ]] && continue
+		printf '%s\0' "$entry"
+	done <"$tmp_entries" >"$tmp_files"
+	rm -f "$tmp_entries"
+
+	write_tar_checksum_command "$tmp_command"
+
+	local rc=0
+	TMP_MANIFEST="$tmp_manifest" \
+		tar --null --files-from="$tmp_files" --to-command="$tmp_command" -xf - \
+		< <(tar_decompress_stream "$archive" "$compression") || rc=$?
+
+	LC_ALL=C sort -t $'\t' -k2,2 "$tmp_manifest" |
+		awk -F $'\t' '{printf "%s  %s  %s\n", $1, $2, $3}' >>"$dest"
+
+	rm -f "$tmp_files" "$tmp_command" "$tmp_manifest"
+	return "$rc"
 }

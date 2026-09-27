@@ -29,18 +29,19 @@ Description:
   - For *.7z inputs: extracts the archive into a temporary directory, repacks
     its contents into an uncompressed tar stream, and compresses that stream
     with pzstd to produce a seekable .tar.zst file.
-  - For *.tar.gz/*.tgz, *.tar.xz/*.txz, or *.tar.bz2/*.tbz* inputs: streams the
-    tarball through the appropriate decompressor directly into pzstd without
-    creating a temporary workspace.
   - For *.zip inputs: extracts the archive into a temporary directory, repacks
     its contents into an uncompressed tar stream, and compresses that stream
     with pzstd to produce a seekable .tar.zst file.
+  - For *.tar.gz/*.tgz/*.taz, *.tar.xz/*.txz/*.tlz, *.tar.bz2/*.tbz*,
+    plain *.tar, or *.tar.zst/*.tzst inputs: streams the tarball through the
+    appropriate decompressor (or cat) directly into pzstd without creating a
+    temporary workspace.
 
 Options:
   -o, --output FILE       Target .tar.zst path (default: ARCHIVE basename + .tar.zst)
       --pzstd-level -#    Override pzstd compression level (default: -10)
       --temp-dir DIR      Create the temporary extraction directory under DIR
-                           (only applies to .7z inputs)
+                           (only applies to .7z and .zip inputs)
       --sha256            Emit SHA-256 manifest (defaults to ARCHIVE basename + .sha256)
       --sha256-file FILE  Emit SHA-256 manifest to FILE
       --sha256-append     Append to the SHA-256 file instead of truncating
@@ -53,114 +54,41 @@ Options:
 EOF
 }
 
-tar_list_entries() {
-  local archive="$1" dest="$2" compression="$3"
-
-  run_tar_list() {
-    local tar_base=(tar --quoting-style=literal --show-transformed-names -tf)
-    local decompress_cmd
-    decompress_cmd="$(get_decompression_command "$compression")"
-    if [[ "$compression" == "none" ]]; then
-      "${tar_base[@]}" "$archive"
-    else
-      if ! cat "$archive" | $decompress_cmd | "${tar_base[@]}" -; then
-        return 1
-      fi
-    fi
-  }
-
-  if ! run_tar_list >"$dest" 2>&1; then
-    cat "$dest" >&2
-    rm -f "$dest"
-    die "Failed to list tar entries for $archive"
-  fi
-}
-
-write_sha256_manifest_tar() {
-  local archive="$1" dest="$2" compression="$3"
-  [[ -z "$dest" ]] && return 0
-
-  local tmp_entries tmp_command
-  tmp_entries="$(mktemp)"
-  tmp_command="$(mktemp)"
-
-  tar_list_entries "$archive" "$tmp_entries" "$compression"
-
-  # Filter out directories
-  local tmp_files
-  tmp_files="$(mktemp)"
-  while IFS= read -r entry; do
-    [[ -z "$entry" ]] && continue
-    [[ "$entry" == */ ]] && continue
-    printf '%s\0' "$entry"
-  done <"$tmp_entries" >"$tmp_files"
-  rm -f "$tmp_entries"
-
-  cat >"$tmp_command" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-f="${TAR_FILENAME:-}"
-if [[ -z "$f" || "$f" == */ ]]; then
-  exit 0
-fi
-tmp_size="$(mktemp)"
-if ! hash="$(tee >(wc -c | awk '{print $1}' >"$tmp_size") | sha256sum | awk '{print $1}')"; then
-  rm -f "$tmp_size"
-  exit 1
-fi
-if ! read -r size <"$tmp_size"; then
-  size=0
-fi
-rm -f "$tmp_size"
-manifest_line="$(printf '%s\t%s\t%s\n' "$hash" "$f" "$size")"
-if [[ -n "${TMP_MANIFEST:-}" ]]; then
-  printf '%s\n' "$manifest_line" >>"$TMP_MANIFEST"
-fi
-printf '%s  %s  %s\n' "$hash" "$f" "$size"
-EOF
-  chmod +x "$tmp_command"
-
-  local tmp_manifest
-  tmp_manifest="$(mktemp)"
-  export TMP_MANIFEST="$tmp_manifest"
-
-  case "$compression" in
-  gz | bz2 | xz)
-    local decompress_cmd
-    decompress_cmd="$(get_decompression_command "$compression")"
-    cat "$archive" | $decompress_cmd | tar --null --files-from="$tmp_files" --to-command="$tmp_command" -xf - 2>/dev/null || true
-    ;;
-  none)
-    tar --null --files-from="$tmp_files" --to-command="$tmp_command" -xf "$archive" 2>/dev/null || true
-    ;;
-  esac
-
-  LC_ALL=C sort -t $'\t' -k2,2 "$tmp_manifest" | awk -F $'\t' '{printf "%s  %s  %s\n", $1, $2, $3}' >>"$dest"
-
-  rm -f "$tmp_files" "$tmp_command" "$tmp_manifest"
-}
-
 setup_stream_input() {
+  local compression
   case "$ARCHIVE_TYPE" in
-  tar.gz)
-    require_cmd pigz
-    INPUT_STREAM_CMD=(pigz -dc -- "$ARCHIVE")
-    INPUT_STREAM_DESC="pigz -dc"
-    ;;
-  tar.xz)
-    require_cmd pixz
-    INPUT_STREAM_CMD=(pixz -k -d -- "$ARCHIVE" /dev/stdout)
-    INPUT_STREAM_DESC="pixz -d"
-    ;;
-  tar.bz2)
-    require_cmd pbzip2
-    INPUT_STREAM_CMD=(pbzip2 -dc -- "$ARCHIVE")
-    INPUT_STREAM_DESC="pbzip2 -dc"
-    ;;
+  tar.gz) compression="gz" ;;
+  tar.xz) compression="xz" ;;
+  tar.bz2) compression="bz2" ;;
+  tar.zst) compression="zst" ;;
+  tar) compression="$(detect_tar_compression "$ARCHIVE")" ;;
   *)
     die "Streaming conversion is not supported for archive type '$ARCHIVE_TYPE'"
     ;;
   esac
+
+  case "$compression" in
+  gz)
+    require_cmd pigz
+    ;;
+  bz2)
+    require_cmd pbzip2
+    ;;
+  xz)
+    require_cmd pixz
+    ;;
+  zst)
+    require_cmd pzstd
+    ;;
+  none)
+    ;;
+  *)
+    die "Unsupported tar compression '$compression'"
+    ;;
+  esac
+
+  INPUT_STREAM_CMD=(tar_decompress_stream "$ARCHIVE" "$compression")
+  INPUT_STREAM_DESC="$(get_decompression_command "$compression")"
 }
 
 WORKDIR=""
@@ -257,6 +185,10 @@ if [[ -z "$OUTPUT" ]]; then
   OUTPUT="$(default_basename_path "$ARCHIVE").tar.zst"
 fi
 
+if [[ "$OUTPUT" == "$ARCHIVE" || ( -e "$OUTPUT" && -e "$ARCHIVE" && "$OUTPUT" -ef "$ARCHIVE" ) ]]; then
+  die "Refusing to convert in place: output $OUTPUT is the same file as input $ARCHIVE"
+fi
+
 if [[ -e "$OUTPUT" && "$FORCE" -ne 1 ]]; then
   die "Output already exists: $OUTPUT (use --force to overwrite)"
 fi
@@ -321,10 +253,12 @@ tar_stream() {
 
 if [[ "$SHA256_ENABLED" -eq 1 ]]; then
   case "$ARCHIVE_TYPE" in
-  tar.gz | tar.xz | tar.bz2)
+  tar | tar.gz | tar.xz | tar.bz2 | tar.zst)
     TAR_COMPRESSION="$(detect_tar_compression "$ARCHIVE")"
     log "Computing SHA-256 manifest for tar archive..."
-    write_sha256_manifest_tar "$ARCHIVE" "$SHA256_FILE" "$TAR_COMPRESSION"
+    if ! write_tar_manifest "$ARCHIVE" "$TAR_COMPRESSION" "$SHA256_FILE"; then
+      die "Failed to write SHA256 manifest"
+    fi
     ;;
   esac
 fi
