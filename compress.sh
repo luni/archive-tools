@@ -333,27 +333,30 @@ compress_small() {
     return 2
   fi
 
+  # Hash taps: tee >(cmd) process substitutions are untracked children in
+  # bash (no $!, bare wait does not reap them), so each checksum job reads a
+  # fifo as a real background job that can be waited on explicitly.
+  local -a tap_fifos=() tap_pids=()
+  local fifo
+  if [[ -n "$sha1_tmp" ]]; then
+    fifo="$(mktemp -u)"
+    mkfifo -- "$fifo"
+    sha1sum <"$fifo" | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha1_tmp" &
+    tap_pids+=("$!")
+    tap_fifos+=("$fifo")
+  fi
+  if [[ -n "$sha256_tmp" ]]; then
+    fifo="$(mktemp -u)"
+    mkfifo -- "$fifo"
+    sha256sum <"$fifo" | awk -v path="$f" -v size="$size" '{printf "%s  %s  %s\n", $1, path, size}' >"$sha256_tmp" &
+    tap_pids+=("$!")
+    tap_fifos+=("$fifo")
+  fi
+
   local pipeline_failed=0
-  if [[ -n "$sha1_tmp" || -n "$sha256_tmp" ]]; then
-    if [[ -n "$sha1_tmp" && -n "$sha256_tmp" ]]; then
-      if ! "${read_cmd[@]}" |
-        tee >(sha1sum | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha1_tmp") \
-          >(sha256sum | awk -v path="$f" -v size="$size" '{printf "%s  %s  %s\n", $1, path, size}' >"$sha256_tmp") |
-        $compress_cmd_str >"$tmp"; then
-        pipeline_failed=1
-      fi
-    elif [[ -n "$sha1_tmp" ]]; then
-      if ! "${read_cmd[@]}" |
-        tee >(sha1sum | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha1_tmp") |
-        $compress_cmd_str >"$tmp"; then
-        pipeline_failed=1
-      fi
-    else
-      if ! "${read_cmd[@]}" |
-        tee >(sha256sum | awk -v path="$f" -v size="$size" '{printf "%s  %s  %s\n", $1, path, size}' >"$sha256_tmp") |
-        $compress_cmd_str >"$tmp"; then
-        pipeline_failed=1
-      fi
+  if ((${#tap_fifos[@]})); then
+    if ! "${read_cmd[@]}" | tee -- "${tap_fifos[@]}" | $compress_cmd_str >"$tmp"; then
+      pipeline_failed=1
     fi
   else
     if ! "${read_cmd[@]}" | $compress_cmd_str >"$tmp"; then
@@ -361,7 +364,16 @@ compress_small() {
     fi
   fi
 
-  if ((pipeline_failed)); then
+  # Reap the hash taps before reading their output files.
+  local tap_rc=0 pid
+  for pid in "${tap_pids[@]}"; do
+    wait "$pid" || tap_rc=1
+  done
+  if ((${#tap_fifos[@]})); then
+    rm -f -- "${tap_fifos[@]}"
+  fi
+
+  if ((pipeline_failed || tap_rc)); then
     rm -f -- "$tmp"
     [[ -n "$sha1_tmp" ]] && rm -f -- "$sha1_tmp"
     [[ -n "$sha256_tmp" ]] && rm -f -- "$sha256_tmp"
@@ -375,6 +387,13 @@ compress_small() {
   if [[ -n "$sha256_tmp" ]]; then
     sha256_line="$(cat "$sha256_tmp")"
     rm -f -- "$sha256_tmp"
+  fi
+
+  # A requested checksum that produced nothing is a job failure — emitting a
+  # manifest line without a hash would be worse than failing loudly.
+  if [[ -n "${SHA1_FILE:-}" && -z "$sha1_line" ]] || [[ -n "${SHA256_FILE:-}" && -z "$sha256_line" ]]; then
+    rm -f -- "$tmp"
+    return 1
   fi
 
   touch -r "$f" "$tmp"
@@ -427,27 +446,29 @@ compress_big_seq() {
     return 2
   fi
 
+  # Hash taps via fifo + real background job — process substitutions from
+  # tee >(cmd) cannot be waited on (see compress_small).
+  local -a tap_fifos=() tap_pids=()
+  local fifo
+  if [[ -n "$sha1_tmp" ]]; then
+    fifo="$(mktemp -u)"
+    mkfifo -- "$fifo"
+    sha1sum <"$fifo" | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha1_tmp" &
+    tap_pids+=("$!")
+    tap_fifos+=("$fifo")
+  fi
+  if [[ -n "$sha256_tmp" ]]; then
+    fifo="$(mktemp -u)"
+    mkfifo -- "$fifo"
+    sha256sum <"$fifo" | awk -v path="$f" -v size="$size" '{printf "%s  %s  %s\n", $1, path, size}' >"$sha256_tmp" &
+    tap_pids+=("$!")
+    tap_fifos+=("$fifo")
+  fi
+
   local pipeline_failed=0
-  if [[ -n "$sha1_tmp" || -n "$sha256_tmp" ]]; then
-    if [[ -n "$sha1_tmp" && -n "$sha256_tmp" ]]; then
-      if ! "${read_cmd[@]}" |
-        tee >(sha1sum | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha1_tmp") \
-          >(sha256sum | awk -v path="$f" -v size="$size" '{printf "%s  %s  %s\n", $1, path, size}' >"$sha256_tmp") |
-        $compress_cmd_str >"$tmp"; then
-        pipeline_failed=1
-      fi
-    elif [[ -n "$sha1_tmp" ]]; then
-      if ! "${read_cmd[@]}" |
-        tee >(sha1sum | awk -v path="$f" '{printf "%s  %s\n", $1, path}' >"$sha1_tmp") |
-        $compress_cmd_str >"$tmp"; then
-        pipeline_failed=1
-      fi
-    else
-      if ! "${read_cmd[@]}" |
-        tee >(sha256sum | awk -v path="$f" -v size="$size" '{printf "%s  %s  %s\n", $1, path, size}' >"$sha256_tmp") |
-        $compress_cmd_str >"$tmp"; then
-        pipeline_failed=1
-      fi
+  if ((${#tap_fifos[@]})); then
+    if ! "${read_cmd[@]}" | tee -- "${tap_fifos[@]}" | $compress_cmd_str >"$tmp"; then
+      pipeline_failed=1
     fi
   else
     if ! "${read_cmd[@]}" | $compress_cmd_str >"$tmp"; then
@@ -455,7 +476,15 @@ compress_big_seq() {
     fi
   fi
 
-  if ((pipeline_failed)); then
+  local tap_rc=0 pid
+  for pid in "${tap_pids[@]}"; do
+    wait "$pid" || tap_rc=1
+  done
+  if ((${#tap_fifos[@]})); then
+    rm -f -- "${tap_fifos[@]}"
+  fi
+
+  if ((pipeline_failed || tap_rc)); then
     rm -f -- "$tmp"
     [[ -n "$sha1_tmp" ]] && rm -f -- "$sha1_tmp"
     [[ -n "$sha256_tmp" ]] && rm -f -- "$sha256_tmp"
@@ -469,6 +498,11 @@ compress_big_seq() {
   if [[ -n "$sha256_tmp" ]]; then
     sha256_line="$(cat "$sha256_tmp")"
     rm -f -- "$sha256_tmp"
+  fi
+
+  if [[ -n "${SHA1_FILE:-}" && -z "$sha1_line" ]] || [[ -n "${SHA256_FILE:-}" && -z "$sha256_line" ]]; then
+    rm -f -- "$tmp"
+    return 1
   fi
 
   touch -r "$f" "$tmp"

@@ -271,9 +271,13 @@ process_manifest() {
       sub(/\r$/, "", line)
       lineno++
       if (line == "" || line ~ /^[[:space:]]*#/ || line ~ /^%%/) next
-      if (match(line, /^[[:xdigit:]]{64}[ \t]+/)) {
-        hash = substr(line, 1, 64)
-        rest = substr(line, RLENGTH + 1)
+      # Portable equivalent of /^[[:xdigit:]]{64}[ \t]+/ — interval quantifiers
+      # need modern awk, so check length + charset + delimiter directly.
+      hash = substr(line, 1, 64)
+      rest = substr(line, 65)
+      sep_ok = (substr(line, 65, 1) ~ /^[ \t]/)
+      if (hash ~ /^[[:xdigit:]]+$/ && sep_ok) {
+        sub(/^[ \t]+/, "", rest)
         entry = rest
         if (match(rest, /[ \t][ \t]+[0-9]+$/)) entry = substr(rest, 1, RSTART - 1)
         print hash sep manifest sep entry >> records
