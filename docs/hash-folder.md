@@ -37,8 +37,13 @@ archive, or vice versa.
   escaped quotes) survive intact.
 - The fallback path lists files with `find -print0` + `sha256sum` + `stat`,
   sorted by path — NUL-safe for whitespace filenames.
-- The output file is truncated before writing (no append mode); an existing
-  manifest is replaced.
+- The manifest is staged in a temp file in the target directory and moved
+  into place only after a fully successful scan: an existing manifest is
+  replaced atomically, and nothing is published when files could not be
+  read (hashdeep exits 0 on unreadable subtrees, so its stderr — empty on
+  a clean run — decides; find errors fail the fallback path outright).
+- An output file inside the scanned directory (as well as the staging file)
+  is excluded from its own manifest.
 
 ## Examples
 

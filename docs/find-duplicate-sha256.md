@@ -68,7 +68,12 @@ deleted, and names containing glob metacharacters are matched literally.
 
 Safety rails: the tool never deletes *every* member of a group (at least one
 must stay), `-y` keeps the alphabetically-first manifest, and the per-file
-confirmation lists all targets before anything is removed.
+confirmation lists all targets before anything is removed. Manifest paths are
+canonicalized (`realpath`) and deduplicated before grouping, so overlapping
+directory arguments can never put a manifest into an "identical" group with
+itself. Manifests with zero parsed entries (empty or corrupt files) all share
+the empty-content signature — they are reported in the skip count but never
+grouped or deleted.
 
 ## Examples
 
