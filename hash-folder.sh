@@ -59,9 +59,20 @@ fi
 
 prepare_file_for_write "$OUTPUT_FILE"
 
+# The output file is created (truncated) above; if it lives inside the
+# scanned directory it must not appear in its own manifest.
+out_rel=""
+if command -v realpath >/dev/null 2>&1; then
+  abs_dir="$(realpath -m -- "$DIRECTORY")"
+  rel="$(realpath -m --relative-to="$abs_dir" -- "$OUTPUT_FILE")"
+  if [[ "$rel" != ".."* && "$rel" != /* && "$rel" != "." ]]; then
+    out_rel="$rel"
+  fi
+fi
+
 if command -v hashdeep >/dev/null 2>&1; then
   log "Using hashdeep for faster hashing"
-  hashdeep -l -c sha256 -r "$DIRECTORY" | awk -v dir="$DIRECTORY" '
+  hashdeep -l -c sha256 -r "$DIRECTORY" | awk -v dir="$DIRECTORY" -v excl="$out_rel" '
     /^#/ || /^%/ || /^sha256[[:space:]]+filename$/ || /^$/ { next }
     {
       # CSV row: size,hash,filename — the filename may be quoted and may
@@ -86,12 +97,13 @@ if command -v hashdeep >/dev/null 2>&1; then
       }
       # Remove leading ./ if present
       gsub(/^\.\//, "", path)
+      if (excl != "" && path == excl) next
       print hash "  " path "  " size
     }
   ' >"$OUTPUT_FILE"
 else
   log "Using find+sha256sum (hashdeep not available)"
-  write_sha256_manifest "$DIRECTORY" "$OUTPUT_FILE"
+  write_sha256_manifest "$DIRECTORY" "$OUTPUT_FILE" "$out_rel"
 fi
 
 log "SHA-256 manifest written to: $OUTPUT_FILE"

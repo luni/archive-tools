@@ -87,8 +87,13 @@ while [[ $# -gt 0 ]]; do
     shift 2
     ;;
   -j | --jobs)
+    [[ $# -lt 2 ]] && die "Missing value for $1"
     JOBS="$2"
     shift 2
+    ;;
+  -j?*)
+    JOBS="${1:2}"
+    shift
     ;;
   -r | --remove-source | --remove-compressed)
     REMOVE_COMPRESSED=1
@@ -131,13 +136,17 @@ for comp in "${SUPPORTED_COMPRESSORS[@]}"; do
   command -v "$comp" >/dev/null 2>&1 || die "Required tool '$comp' is not on PATH."
 done
 
+# 'file' powers misnamed-archive detection; degrade to a warning rather than
+# failing every job with a cryptic missing-command error.
+command -v file >/dev/null 2>&1 || log "warning: 'file' not found; misnamed-archive detection disabled"
+
 ext_pred=()
 add_predicate() {
   local ext="$1"
   if [[ "${#ext_pred[@]}" -gt 0 ]]; then
     ext_pred+=("-o")
   fi
-  ext_pred+=("-name" "*.${ext}")
+  ext_pred+=("-iname" "*.${ext}")
 }
 
 magic_predicate=()
@@ -146,7 +155,7 @@ add_magic_predicate() {
   if [[ "${#magic_predicate[@]}" -gt 0 ]]; then
     magic_predicate+=("-o")
   fi
-  magic_predicate+=("-name" "*.${ext}")
+  magic_predicate+=("-iname" "*.${ext}")
 }
 
 for comp in "${SUPPORTED_COMPRESSORS[@]}"; do
@@ -175,7 +184,7 @@ decompress_file() {
 
   # First check if file is misnamed and rename if needed
   local new_f
-  if new_f="$(rename_misnamed_file "$f" 2>/dev/null)"; then
+  if new_f="$(rename_misnamed_file "$f")"; then
     # Rename succeeded, use the new filename
     if [[ -n "$new_f" && "$new_f" != "$f" ]]; then
       f="$new_f"
@@ -288,7 +297,11 @@ decompress_file() {
 }
 
 decompress_job() {
-  decompress_file "$1" || log "error: failed to decompress $1 (continuing...)"
+  if ! decompress_file "$1"; then
+    log "error: failed to decompress $1 (continuing...)"
+    return 1
+  fi
+  return 0
 }
 
 file_list="$(mktemp)"
@@ -296,15 +309,24 @@ trap 'rm -f "$file_list"' EXIT
 
 find "$SCAN_DIR" -type f \( "${ext_pred[@]}" \) -print0 >"$file_list"
 
+failures=0
 if [[ ! -s "$file_list" ]]; then
   log "No matching compressed files under $SCAN_DIR"
 elif [[ "$JOBS" -gt 1 ]]; then
   export -f decompress_job decompress_file rename_misnamed_file detect_actual_format \
     get_expected_extension log compressor_enabled
   export QUIET OVERWRITE REMOVE_COMPRESSED SUPPORTED_COMPRESSORS_STR
-  parallel -0 --no-run-if-empty -j "$JOBS" decompress_job {} :::: "$file_list"
+  rc=0
+  parallel -0 --no-run-if-empty -j "$JOBS" decompress_job {} :::: "$file_list" || rc=$?
+  # parallel exits with the number of failed jobs (capped at 100; >100 is
+  # a parallel-internal failure) — the per-file "continuing" contract stays.
+  (( rc > 0 )) && failures=$rc
 else
   while IFS= read -r -d '' file; do
-    decompress_job "$file"
+    decompress_job "$file" || failures=$((failures + 1))
   done <"$file_list"
 fi
+
+(( failures > 0 )) && printf 'warning: %s file(s) failed to decompress\n' "$failures" >&2
+
+exit 0
