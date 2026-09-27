@@ -65,9 +65,8 @@ Used by `analyze-archive.sh` and `convert-to-tarzst.sh`.
   characters in ROOT are not treated as patterns.
 - `prepare_file_for_write FILE APPEND`: truncate FILE unless APPEND is set.
 - `create_temp_dir PREFIX [PARENT]`: `mktemp -d` wrapper.
-- `cleanup_temp_file FILE`: safe `rm -f`.
-- `log MSG`, `die MSG`, `require_cmd CMD`, `validate_file_exists`,
-  `validate_dir_exists`, `confirm_action MSG AUTOCONFIRM ITEMS...`.
+- `log MSG`, `die MSG`, `require_cmd CMD`, `validate_dir_exists`,
+  `confirm_action MSG AUTOCONFIRM ITEMS...`.
 
 ## Conventions
 

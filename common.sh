@@ -190,30 +190,6 @@ get_compressor_command() {
 	esac
 }
 
-basename_without_extension() {
-	local path="$1" mode="${2:-last}"
-	local name trimmed
-	name="$(basename -- "$path")"
-
-	case "$mode" in
-	last)
-		trimmed="${name%.*}"
-		;;
-	any)
-		trimmed="${name%%.*}"
-		;;
-	*)
-		die "Invalid mode for basename_without_extension: $mode"
-		;;
-	esac
-
-	if [[ "$trimmed" == "$name" || -z "$trimmed" ]]; then
-		printf '%s\n' "$name"
-	else
-		printf '%s\n' "$trimmed"
-	fi
-}
-
 confirm_action() {
 	local prompt="$1" auto_confirm="$2"
 	shift 2
@@ -459,52 +435,13 @@ create_temp_dir() {
 	fi
 }
 
-cleanup_temp_file() {
-	local file="$1"
-	[[ -n "$file" && -f "$file" ]] && rm -f -- "$file"
-}
-
-cleanup_temp_dir() {
-	local dir="$1" keep="${2:-0}"
-	if [[ "$keep" -eq 0 && -n "$dir" && -d "$dir" ]]; then
-		rm -rf -- "$dir" || log "Warning: Failed to remove temp directory: $dir"
-	elif [[ -n "$dir" && -d "$dir" ]]; then
-		log "Temporary directory kept at: $dir"
-	fi
-}
-
-# Common script setup
-setup_script_environment() {
-	local script_name="$1"
-	SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd)"
-	# shellcheck source=common.sh
-	source "${SCRIPT_DIR}/common.sh"
-}
-
-# Common argument parsing helpers
-parse_flag() {
-	local var_name="$1"
-	declare -g "$var_name=1"
-}
-
-parse_option() {
-	local var_name="$1" value="$2"
-	[[ $# -lt 2 ]] && die "Missing value for $1"
-	declare -g "$var_name=$value"
-}
-
-validate_file_exists() {
-	local file="$1"
-	[[ -f "$file" ]] || die "File not found: $file"
-}
-
 validate_dir_exists() {
 	local dir="$1"
 	[[ -d "$dir" ]] || die "Directory not found: $dir"
 }
 
 # Stream a (possibly compressed) tar archive's raw tar data to stdout.
-# compression: gz | bz2 | xz | zst | none (see detect_tar_compression)
+# compression: gz | bz2 | xz | lzma | Z | zst | none (see detect_tar_compression)
 tar_decompress_stream() {
 	local archive="$1" compression="${2:-none}"
 	case "$compression" in
