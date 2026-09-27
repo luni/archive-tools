@@ -48,8 +48,8 @@ _run_single_compress_test() {
     expected_paths["$path"]="$tmpdir/${path}.expected"
     source_paths["$path"]="$tmpdir/$path"
     size_map["$path"]="${compression_sizes[$path]}"
-    sha1_map["$path"]="$(sha1sum -- "$tmpdir/$path" | awk '{print $1}')"
-    sha256_map["$path"]="$(sha256sum -- "$tmpdir/$path" | awk '{print $1}')"
+    sha1_map["$path"]="$(sha1sum -- "$tmpdir/$path" | awk '{sub(/^\\/, ""); print $1}')"
+    sha256_map["$path"]="$(sha256sum -- "$tmpdir/$path" | awk '{sub(/^\\/, ""); print $1}')"
     cp -- "$tmpdir/$path" "${expected_paths[$path]}"
   done <<<"$hash_output"
 

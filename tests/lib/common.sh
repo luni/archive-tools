@@ -119,7 +119,7 @@ create_test_fixture() {
     local full_path="$base_dir/$path"
     mkdir -p -- "$(dirname -- "$full_path")"
     generate_test_file "$full_path" "$size" "$seed_prefix $idx"
-    hashes["$path"]="$(sha256sum -- "$full_path" | awk '{print $1}')"
+    hashes["$path"]="$(sha256sum -- "$full_path" | awk '{sub(/^\\/, ""); print $1}')"
   done
 
   for path in "${!hashes[@]}"; do
@@ -227,7 +227,7 @@ create_standard_fixture() {
     local full_path="$base_dir/$path"
     mkdir -p -- "$(dirname -- "$full_path")"
     generate_test_file "$full_path" "$size" "$seed_prefix $idx"
-    hashes["$path"]="$(sha256sum -- "$full_path" | awk '{print $1}')"
+    hashes["$path"]="$(sha256sum -- "$full_path" | awk '{sub(/^\\/, ""); print $1}')"
   done
 
   # Output hash mapping for caller to capture

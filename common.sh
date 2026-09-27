@@ -39,8 +39,21 @@ prepare_file_for_write() {
 	fi
 }
 
+# Manifest records are "hash  path  size" on one line, so control characters
+# in a path must be escaped to keep records parseable: \ -> \\, tab -> \t,
+# newline -> \n, CR -> \r. Consumers treat the field opaquely, so identical
+# real names escape identically and still compare equal.
+escape_manifest_path() {
+	local p="$1"
+	p="${p//\\/\\\\}"
+	p="${p//$'\n'/\\n}"
+	p="${p//$'\t'/\\t}"
+	p="${p//$'\r'/\\r}"
+	printf '%s' "$p"
+}
+
 write_sha256_manifest() {
-	local root="$1" dest="$2" file rel hash size ex
+	local root="$1" dest="$2" file rel esc hash size ex
 	shift 2
 	local -a excludes=("$@")
 	[[ -z "$dest" ]] && return 0
@@ -70,9 +83,12 @@ write_sha256_manifest() {
 		for ex in "${excludes[@]}"; do
 			[[ -n "$ex" && "$rel" == "$ex" ]] && continue 2
 		done
-		hash="$(sha256sum -- "$file" | awk '{print $1}')"
+		# sha256sum prefixes the line (and thus $1) with '\' when the name
+		# needs escaping; strip it so the hash field stays 64 hex chars.
+		hash="$(sha256sum -- "$file" | awk '{sub(/^\\/, ""); print $1}')"
 		size="$(stat -c '%s' -- "$file")"
-		printf '%s  %s  %s\n' "$hash" "$rel" "$size" >>"$dest"
+		esc="$(escape_manifest_path "$rel")"
+		printf '%s  %s  %s\n' "$hash" "$esc" "$size" >>"$dest"
 	done <"$tmp_list"
 	rm -f "$tmp_list"
 }
@@ -565,6 +581,11 @@ if [[ -z "$f" || "$f" == */ ]]; then
 	exit 0
 fi
 f="${f#./}"
+# Escape control chars so each member stays a single parseable manifest record.
+f="${f//\\/\\\\}"
+f="${f//$'\n'/\\n}"
+f="${f//$'\t'/\\t}"
+f="${f//$'\r'/\\r}"
 if [[ -n "${TAR_CMD_VERBOSE:-}" ]]; then
 	printf 'processing: %s\n' "$f" >&2
 fi

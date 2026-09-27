@@ -96,7 +96,7 @@ _run_default_output_test() {
   [[ -f "$expected_output" ]] || { echo "Default output file not created: $expected_output" >&2; return 1; }
 
   # Verify content
-  local expected_hash="$(sha256sum "$test_dir/test.txt" | awk '{print $1}')"
+  local expected_hash="$(sha256sum "$test_dir/test.txt" | awk '{sub(/^\\/, ""); print $1}')"
   local actual_hash="$(awk '/test\.txt/ {print $1}' "$expected_output")"
   [[ "$expected_hash" == "$actual_hash" ]] || { echo "Default output hash mismatch" >&2; return 1; }
 
@@ -148,12 +148,53 @@ _run_error_tests() {
   log "Error tests passed"
 }
 
+run_escaped_names_test() {
+  run_standard_test "hash-folder.sh escaped filenames test" _run_escaped_names_test
+}
+
+_run_escaped_names_test() {
+  local tmpdir="$1"
+  local test_dir="$tmpdir/nasty"
+  local output_file="$tmpdir/nasty.sha256"
+  mkdir -p "$test_dir"
+
+  # Names exercising the manifest escape rules: backslash, tab, newline.
+  printf 'A' >"$test_dir/back\\slash.txt"
+  printf 'B' >"$test_dir/tab"$'\t'"name.txt"
+  printf 'C' >"$test_dir/evil"$'\n'"name.txt"
+
+  local hash_script="$REPO_ROOT/hash-folder.sh"
+  "$hash_script" "$test_dir" "$output_file"
+
+  # Every record must be a single well-formed line: 64-hex hash, escaped
+  # path token, size. A raw newline in a name would split the record.
+  local lines
+  lines="$(wc -l <"$output_file")"
+  if [[ "$lines" -ne 3 ]]; then
+    echo "Expected 3 manifest records, got $lines" >&2
+    cat -A "$output_file" >&2
+    return 1
+  fi
+  while IFS= read -r line; do
+    if [[ ! "$line" =~ ^[[:xdigit:]]{64}[[:space:]][[:space:]]+[^[:space:]]+[[:space:]][[:space:]]+[0-9]+$ ]]; then
+      echo "Malformed manifest record: $line" >&2
+      return 1
+    fi
+  done <"$output_file"
+  grep -q 'back\\\\slash\.txt' "$output_file" || { echo "Backslash name not escaped" >&2; return 1; }
+  grep -q 'tab\\tname\.txt' "$output_file" || { echo "Tab name not escaped" >&2; return 1; }
+  grep -q 'evil\\nname\.txt' "$output_file" || { echo "Newline name not escaped" >&2; return 1; }
+
+  log "Escaped filenames test passed"
+}
+
 main() {
   run_hash_folder_test "normal"
   run_hash_folder_test "quiet"
   run_default_output_test
   run_help_test
   run_error_tests
+  run_escaped_names_test
 }
 
 main "$@"

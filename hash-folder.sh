@@ -98,12 +98,19 @@ if command -v realpath >/dev/null 2>&1; then
   done
 fi
 
+# hashdeep emits filenames raw — a newline inside a name splits its CSV record
+# into a valid-looking fragment plus a silently skipped continuation. Detect
+# such names up front and take the find+sha256sum path, which escapes them.
+nl_names=""
 if command -v hashdeep >/dev/null 2>&1; then
+  nl_names="$(find "$DIRECTORY" -type f -name "*"$'\n'"*" -print -quit 2>/dev/null)"
+fi
+if command -v hashdeep >/dev/null 2>&1 && [[ -z "$nl_names" ]]; then
   log "Using hashdeep for faster hashing"
   # hashdeep exits 0 even when parts of the tree are unreadable; its stderr is
   # empty on a clean run, so any output there means the manifest is incomplete.
   hd_err="$(mktemp)"
-  hashdeep -l -c sha256 -r "$DIRECTORY" 2>"$hd_err" | awk -v dir="$DIRECTORY" -v excl="$out_rel" -v excl2="$tmp_rel" '
+  if ! hashdeep -l -c sha256 -r "$DIRECTORY" 2>"$hd_err" | awk -v dir="$DIRECTORY" -v excl="$out_rel" -v excl2="$tmp_rel" '
     /^#/ || /^%/ || /^sha256[[:space:]]+filename$/ || /^$/ { next }
     {
       # CSV row: size,hash,filename — the filename may be quoted and may
@@ -117,6 +124,13 @@ if command -v hashdeep >/dev/null 2>&1; then
       hash = substr($0, p1 + 1, p2 - p1 - 1)
       path = substr($0, p2 + 1)
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", size)
+      # An unbalanced quote means an embedded newline split the hashdeep
+      # CSV record across two lines — the path would be silently truncated.
+      if ((substr(path, 1, 1) == "\"") != (substr(path, length(path), 1) == "\"")) {
+        print "hash-folder: unparseable filename (embedded newline?) in: " path > "/dev/stderr"
+        bad = 1
+        next
+      }
       # Strip surrounding quotes and unescape doubled quotes
       if (substr(path, 1, 1) == "\"" && substr(path, length(path), 1) == "\"") {
         path = substr(path, 2, length(path) - 2)
@@ -129,9 +143,18 @@ if command -v hashdeep >/dev/null 2>&1; then
       # Remove leading ./ if present
       gsub(/^\.\//, "", path)
       if ((excl != "" && path == excl) || (excl2 != "" && path == excl2)) next
+      # Escape control chars so the record stays on one line (see
+      # escape_manifest_path in common.sh).
+      gsub(/\\/, "\\\\", path)
+      gsub(/\t/, "\\t", path)
+      gsub(/\r/, "\\r", path)
       print hash "  " path "  " size
     }
-  ' >"$tmp_manifest"
+    END { if (bad) exit 1 }
+  ' >"$tmp_manifest"; then
+    cat "$hd_err" >&2
+    die "hashdeep manifest generation failed; refusing to publish"
+  fi
   if [[ -s "$hd_err" ]]; then
     cat "$hd_err" >&2
     rm -f "$hd_err"

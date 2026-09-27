@@ -38,7 +38,7 @@ _run_analyze_archive_case() {
       mkdir -p -- "$(dirname -- "$abs")"
       # Make files larger (4KB each) to force RAR splitting
       generate_test_file "$abs" 4096 "Analyze archive payload $idx (${archive_type})"
-      expected_hashes["$rel"]="$(sha256sum -- "$abs" | awk '{print $1}')"
+      expected_hashes["$rel"]="$(sha256sum -- "$abs" | awk '{sub(/^\\/, ""); print $1}')"
     done
   else
     # Use standard fixture for other tests
@@ -58,7 +58,7 @@ _run_analyze_archive_case() {
     local unicode_abs="$input_dir/$unicode_path"
     mkdir -p -- "$(dirname -- "$unicode_abs")"
     generate_test_file "$unicode_abs" 4096 "Unicode payload (${archive_type})"
-    expected_hashes["$unicode_path"]="$(sha256sum -- "$unicode_abs" | awk '{print $1}')"
+    expected_hashes["$unicode_path"]="$(sha256sum -- "$unicode_abs" | awk '{sub(/^\\/, ""); print $1}')"
     rel_paths+=("$unicode_path")
   fi
 
@@ -481,6 +481,32 @@ _run_analyze_archive_password_protected_zip() {
   log "Password-protected ZIP archive test passed - correctly skipped/handled"
 }
 
+run_analyze_archive_unsafe_members() {
+  run_standard_test "analyze-archive.sh unsafe member names test" _run_analyze_archive_unsafe_members
+}
+
+_run_analyze_archive_unsafe_members() {
+  local tmpdir="$1"
+
+  # GNU tar refuses to extract members whose names contain ".." components;
+  # analyze must fail loudly and must not leave a manifest behind.
+  echo "payload" >"$tmpdir/payload.txt"
+  tar -cf "$tmpdir/evil.tar" --transform='s|payload\.txt|../escape.txt|' \
+    -C "$tmpdir" payload.txt 2>/dev/null
+
+  local manifest="$tmpdir/evil.tar.sha256"
+  if "$REPO_ROOT/analyze-archive.sh" -q -o "$manifest" "$tmpdir/evil.tar" 2>/dev/null; then
+    echo "analyze-archive.sh unexpectedly succeeded on a tar with ../ members" >&2
+    return 1
+  fi
+  if [[ -e "$manifest" ]]; then
+    echo "Manifest was published for an archive that failed processing" >&2
+    return 1
+  fi
+
+  log "Unsafe member names test passed"
+}
+
 run_analyze_archive_suite() {
   run_analyze_archive_case tar
   run_analyze_archive_case 7z
@@ -492,6 +518,7 @@ run_analyze_archive_suite() {
   run_analyze_archive_invalid_cases
   run_analyze_archive_password_protected
   run_analyze_archive_password_protected_zip
+  run_analyze_archive_unsafe_members
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

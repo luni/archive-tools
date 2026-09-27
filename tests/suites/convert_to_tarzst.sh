@@ -83,7 +83,7 @@ _run_convert_to_tarzst_suite() {
     local abs="$tar_test_dir/$rel"
     mkdir -p -- "$(dirname -- "$abs")"
     generate_test_file "$abs" "${tar_sizes[$idx]}" "Tar payload $idx"
-    tar_expected_hashes["$rel"]="$(sha256sum -- "$abs" | awk '{print $1}')"
+    tar_expected_hashes["$rel"]="$(sha256sum -- "$abs" | awk '{sub(/^\\/, ""); print $1}')"
   done
 
   local base_tar="$tmpdir/test.tar"
@@ -146,7 +146,7 @@ _run_convert_to_tarzst_suite() {
     local abs="$zip_test_dir/$rel"
     mkdir -p -- "$(dirname -- "$abs")"
     generate_test_file "$abs" "${zip_sizes[$idx]}" "ZIP payload $idx"
-    zip_expected_hashes["$rel"]="$(sha256sum -- "$abs" | awk '{print $1}')"
+    zip_expected_hashes["$rel"]="$(sha256sum -- "$abs" | awk '{sub(/^\\/, ""); print $1}')"
   done
 
   local -a zip_compressors=("store" "deflate" "bzip2" "lzma")
@@ -228,7 +228,7 @@ _run_convert_to_tarzst_spaces_test() {
     local abs="$input_dir/$rel"
     mkdir -p -- "$(dirname -- "$abs")"
     generate_test_file "$abs" "$size" "Spaces test payload $idx"
-    expected_hashes["$rel"]="$(sha256sum -- "$abs" | awk '{print $1}')"
+    expected_hashes["$rel"]="$(sha256sum -- "$abs" | awk '{sub(/^\\/, ""); print $1}')"
   done
 
   # Test with different archive types

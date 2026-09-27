@@ -94,6 +94,11 @@ parse_7z_listing() {
       size="${line#Size = }"
     elif [[ "$line" == Folder\ =\ * ]]; then
       folder="${line#Folder = }"
+    elif [[ "$line" != *" = "* ]]; then
+      # Every -slt line inside the entry block is "Key = Value"; a bare line
+      # is the continuation of a member name split by an embedded newline,
+      # which would silently truncate that entry's path.
+      die "Malformed listing line (embedded newline in member name?): $line"
     fi
   done <"$listing_tmp"
 
@@ -421,8 +426,9 @@ else
     if [[ "$actual_size" != "$entry_size" ]]; then
       die "Failed to compute SHA-256 for $entry (expected $entry_size bytes, read $actual_size)"
     fi
-    printf '%s\t%s\t%s\n' "$hash" "$entry" "$entry_size" >>"$tmp_manifest"
-    printf '%s  %s  %s\n' "$hash" "$entry" "$entry_size"
+    entry_esc="$(escape_manifest_path "$entry")"
+    printf '%s\t%s\t%s\n' "$hash" "$entry_esc" "$entry_size" >>"$tmp_manifest"
+    printf '%s  %s  %s\n' "$hash" "$entry_esc" "$entry_size"
   done <"$tmp_entries_list"
   rm -f "$tmp_entries_list"
   tmp_entries_list=""
