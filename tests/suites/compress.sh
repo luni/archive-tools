@@ -114,10 +114,76 @@ _run_single_compress_test() {
   verify_checksum_file "$sha256_file" "${sha256_args[@]}"
 }
 
+run_big_no_checksum_test() {
+  run_standard_test "compress.sh big path without checksums exits 0" _run_big_no_checksum_test
+}
+
+# Regression: compress_big_seq must return 0 after successful compression
+# even when no checksum lines were emitted (bare && chain used to end
+# the function with status 1).
+_run_big_no_checksum_test() {
+  local tmpdir="$1"
+  generate_test_file "$tmpdir/big.sql" 4096 "big-no-checksum"
+
+  local output
+  if ! output="$("$COMPRESS_SCRIPT" --dir "$tmpdir" --big xz --threshold 2048 -q </dev/null 2>&1)"; then
+    echo "compress.sh failed without checksum options" >&2
+    echo "$output" >&2
+    return 1
+  fi
+  [[ -f "$tmpdir/big.sql.xz" ]] || {
+    echo "Expected big.sql.xz output" >&2
+    return 1
+  }
+}
+
+run_checksum_self_exclusion_test() {
+  run_standard_test "compress.sh excludes its own checksum output" _run_checksum_self_exclusion_test
+}
+
+# Regression: a checksum file inside the scan dir must not be picked up as
+# input (it used to be compressed, deleted, then recreated containing an
+# empty-file hash for itself).
+_run_checksum_self_exclusion_test() {
+  local tmpdir="$1"
+  local sha256_file="$tmpdir/checksums.txt"
+
+  echo x >"$tmpdir/a.txt"
+  echo y >"$tmpdir/b.txt"
+  : >"$sha256_file"
+
+  local output
+  if ! output="$("$COMPRESS_SCRIPT" --dir "$tmpdir" --ext txt --sha256 "$sha256_file" -q </dev/null 2>&1)"; then
+    echo "compress.sh failed" >&2
+    echo "$output" >&2
+    return 1
+  fi
+
+  if [[ -e "$tmpdir/checksums.txt.xz" ]]; then
+    echo "Checksum output file was itself compressed" >&2
+    return 1
+  fi
+  [[ -f "$sha256_file" ]] || {
+    echo "Checksum output file missing: $sha256_file" >&2
+    return 1
+  }
+  if grep -q 'checksums\.txt' "$sha256_file"; then
+    echo "Checksum file must not contain an entry for itself" >&2
+    return 1
+  fi
+  grep -q 'a\.txt' "$sha256_file" || {
+    echo "Missing entry for a.txt in $sha256_file" >&2
+    cat "$sha256_file" >&2
+    return 1
+  }
+}
+
 run_compress_suite() {
   run_single_compress_test xz xz "xz-only"
   run_single_compress_test zstd zstd "zstd-only"
   run_single_compress_test zstd zstd "zstd-big-parallel" 2
+  run_big_no_checksum_test
+  run_checksum_self_exclusion_test
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

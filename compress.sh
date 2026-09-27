@@ -122,18 +122,29 @@ fanout_checksums() {
 while [[ $# -gt 0 ]]; do
   case "$1" in
   -d | --dir)
+    [[ $# -lt 2 ]] && die "Missing value for $1"
     SCAN_DIR="$2"
     shift 2
     ;;
+  -d?*)
+    SCAN_DIR="${1:2}"
+    shift
+    ;;
   -s | --sha1)
+    [[ $# -lt 2 ]] && die "Missing value for $1"
     SHA1_FILE="$2"
     shift 2
+    ;;
+  -s?*)
+    SHA1_FILE="${1:2}"
+    shift
     ;;
   --sha1-append)
     SHA1_APPEND=1
     shift
     ;;
   --sha256)
+    [[ $# -lt 2 ]] && die "Missing value for $1"
     SHA256_FILE="$2"
     shift 2
     ;;
@@ -142,12 +153,22 @@ while [[ $# -gt 0 ]]; do
     shift
     ;;
   -t | --threshold)
+    [[ $# -lt 2 ]] && die "Missing value for $1"
     THRESHOLD_BYTES="$(parse_size "$2")"
     shift 2
     ;;
+  -t?*)
+    THRESHOLD_BYTES="$(parse_size "${1:2}")"
+    shift
+    ;;
   -j | --jobs)
+    [[ $# -lt 2 ]] && die "Missing value for $1"
     SMALL_JOBS="$2"
     shift 2
+    ;;
+  -j?*)
+    SMALL_JOBS="${1:2}"
+    shift
     ;;
   --small)
     SMALL_COMPRESSOR="$2"
@@ -214,6 +235,7 @@ done
 # Validate required tools before doing any work
 require_cmd parallel
 require_cmd file
+require_cmd pv
 case "$SMALL_COMPRESSOR" in
 xz) require_cmd xz ;;
 zstd) require_cmd zstd ;;
@@ -344,6 +366,7 @@ compress_small() {
   [[ "$KEEP_SOURCE" -eq 0 ]] && rm -f -- "$f"
 
   emit_checksum_lines "$sha1_line" "$sha256_line"
+  return 0
 }
 
 compress_big_seq() {
@@ -371,8 +394,14 @@ compress_big_seq() {
 
   log "big(${BIG_COMPRESSOR}): $f -> $out"
 
+  # xz/zstd selected for the big path use their multithreaded variants
+  # (the plain arms are single-threaded on purpose, for small-file jobs).
+  local big_comp="$BIG_COMPRESSOR"
+  [[ "$big_comp" == "xz" ]] && big_comp="xz_big"
+  [[ "$big_comp" == "zstd" ]] && big_comp="zstd_big"
+
   local compress_cmd_str
-  compress_cmd_str=$(get_compressor_command "$BIG_COMPRESSOR" compress)
+  compress_cmd_str=$(get_compressor_command "$big_comp" compress)
   if [[ "$compress_cmd_str" == "unknown" ]]; then
     echo "BIG_COMPRESSOR must be pixz, xz, pzstd, or zstd" >&2
     rm -f -- "$tmp"
@@ -431,6 +460,7 @@ compress_big_seq() {
 
   [[ -n "$sha1_line" ]] && append_checksum_line sha1 "$sha1_line"
   [[ -n "$sha256_line" ]] && append_checksum_line sha256 "$sha256_line"
+  return 0
 }
 
 export -f compress_small compress_big_seq out_name emit_checksum_lines append_checksum_line log skip_if_already_compressed detect_actual_format get_expected_extension get_compression_extension get_compressor_command
@@ -465,6 +495,14 @@ find "$SCAN_DIR" -type f \( "${ext_pred[@]}" \) \
   ! -iname '*.zst' ! -iname '*.tzst' ! -iname '*.xz' ! -iname '*.txz' \
   ! -iname '*.gz' ! -iname '*.tgz' ! -iname '*.bz2' ! -iname '*.tbz' ! -iname '*.tbz2' -print0 |
   while IFS= read -r -d '' f; do
+    # Never process the checksum outputs themselves (-ef also covers
+    # path variants like ./x vs x and hardlinks to the same file).
+    if [[ -n "$SHA1_FILE" && -e "$SHA1_FILE" && "$f" -ef "$SHA1_FILE" ]]; then
+      continue
+    fi
+    if [[ -n "$SHA256_FILE" && -e "$SHA256_FILE" && "$f" -ef "$SHA256_FILE" ]]; then
+      continue
+    fi
     if [[ "$(stat -c '%s' -- "$f" 2>/dev/null || stat -f '%z' -- "$f")" -lt "$THRESHOLD_BYTES" ]]; then
       printf '%s\0' "$f" >>"$small_list"
     else
@@ -472,19 +510,26 @@ find "$SCAN_DIR" -type f \( "${ext_pred[@]}" \) \
     fi
   done || true
 
+# GNU parallel's --bar writes to /dev/tty and errors in non-interactive
+# environments; only enable it when a usable controlling tty exists.
+parallel_bar=()
+if [[ -t 1 ]] && (: </dev/tty) 2>/dev/null; then
+  parallel_bar=(--bar)
+fi
+
 # small files in parallel
 if [[ -n "$SHA1_FILE" || -n "$SHA256_FILE" ]]; then
-  parallel -0 --no-run-if-empty --bar --lb -j "$SMALL_JOBS" compress_small {} :::: "$small_list" | fanout_checksums
+  parallel -0 --no-run-if-empty "${parallel_bar[@]}" --lb -j "$SMALL_JOBS" compress_small {} :::: "$small_list" | fanout_checksums
 else
-  parallel -0 --no-run-if-empty --bar -j "$SMALL_JOBS" compress_small {} :::: "$small_list"
+  parallel -0 --no-run-if-empty "${parallel_bar[@]}" -j "$SMALL_JOBS" compress_small {} :::: "$small_list"
 fi
 
 # big files (parallelizable)
 if [[ -s "$big_list" ]]; then
   if [[ -n "$SHA1_FILE" || -n "$SHA256_FILE" ]]; then
-    parallel -0 --no-run-if-empty --bar --lb -j "$BIG_JOBS" compress_big_seq {} :::: "$big_list"
+    parallel -0 --no-run-if-empty "${parallel_bar[@]}" --lb -j "$BIG_JOBS" compress_big_seq {} :::: "$big_list"
   else
-    parallel -0 --no-run-if-empty --bar -j "$BIG_JOBS" compress_big_seq {} :::: "$big_list"
+    parallel -0 --no-run-if-empty "${parallel_bar[@]}" -j "$BIG_JOBS" compress_big_seq {} :::: "$big_list"
   fi
 fi
 
