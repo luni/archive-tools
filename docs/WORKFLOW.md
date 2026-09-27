@@ -31,7 +31,7 @@ flowchart TD
     end
 
     subgraph restore["Restore"]
-        D["decompress.sh<br/>(.xz/.zst/.gz/.bz2 → original)"]
+        D["decompress.sh<br/>(.xz/.zst/.gz/.bz2/.lzma/.Z → original)"]
     end
 
     LOOSE --> C
@@ -146,7 +146,8 @@ auto-keeps the first (sorted) one.
 ./decompress.sh -d /data/dumps -c xz       # only .xz/.txz
 ```
 
-Restores `.xz/.txz`, `.zst/.tzst`, `.gz/.tgz`, `.bz2/.tbz*` next to the
+Restores `.xz/.txz`, `.zst/.tzst`, `.gz/.tgz`, `.bz2/.tbz*`, `.tlz`/`.lzma`,
+and `.taz`/`.Z` next to the
 source, repairs misnamed files via `file` magic, and preserves mtimes.
 `.tar.zst` → `.tzst`-style outputs restore to `.tar`; unpack with `tar -xf`.
 
@@ -174,8 +175,10 @@ SHA256␣␣path␣␣size      (two spaces between fields, sorted by path)
 
 `find-duplicate-sha256.sh` additionally accepts looser inputs (single space,
 `hash *path` binary markers, missing size column), so externally generated
-`sha256sum` files can be mixed in. Known limitation: filenames containing
-newlines cannot be represented in this line-based format (tabs are fine).
+`sha256sum` files can be mixed in. Paths with control characters are stored
+C-style escaped (`\`→`\\`, tab→`\t`, newline→`\n`, CR→`\r`); externally
+generated manifests with raw control characters in names are not reliably
+parseable.
 
 ## Standalone subproject
 

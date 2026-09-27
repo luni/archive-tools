@@ -3,10 +3,10 @@
 `compress.sh` scans a directory for large text-ish artifacts (tar/sql/txt/csv/ibd)
 and compresses them using sensible defaults. Smaller files are processed in
 parallel, while bigger blobs are streamed sequentially with progress output.
-`decompress.sh` restores `.xz/.txz`, `.zst/.tzst`, `.gz/.tgz`, and `.bz2/.tbz*`
-artifacts via the parallel decompressors `pixz`, `pzstd`, `pigz`, and `pbzip2`,
-writing the expanded file next to the source and preserving mtimes (optionally
-removing the original).
+`decompress.sh` restores `.xz/.txz`, `.zst/.tzst`, `.gz/.tgz`, `.bz2/.tbz*`,
+`.tlz`/`.lzma`, and `.taz`/`.Z` artifacts via `pixz`, `pzstd`, `pigz`,
+`pbzip2`, `xz`, and `gzip`, writing the expanded file next to the source and
+preserving mtimes (optionally removing the original).
 `analyze-archive.sh` inspects `.7z`, `.rar`, `.tar*`, or `.zip` archives and produces a
 sorted manifest with the SHA-256 of every file inside without touching disk.
 `find-duplicate-sha256.sh` scans directories for those manifests, reports when

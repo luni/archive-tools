@@ -72,6 +72,6 @@ Used by `analyze-archive.sh` and `convert-to-tarzst.sh`.
 
 - Manifest record on stdout/files: `SHA256␣␣path␣␣size` (two spaces).
 - Internal record passing uses `hash⇥path⇥size` (tabs) and NUL framing
-  (`path⇥size\0` in analyzer listings) — tabs in filenames are safe
-  because size is emitted first; embedded newlines are still not
-  representable in the manifest itself.
+  (`path⇥size\0` in analyzer listings). Paths are C-style escaped in
+  manifests (`\`→`\\`, tab→`\t`, newline→`\n`, CR→`\r`), so hostile names
+  stay single-line records; consumers compare the field opaquely.

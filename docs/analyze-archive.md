@@ -31,7 +31,11 @@ analyze-archive.sh [options] ARCHIVE
   piped to `sha256sum` while the exported `TAR_SIZE`/`TAR_FILETYPE` variables
   supply the size and filter non-regular members (directories, links). Member
   names are normalized — a leading `./` is stripped so the manifest matches
-  directory manifests from `hash-folder.sh`/`create-tarzst.sh`. The payload
+  directory manifests from `hash-folder.sh`/`create-tarzst.sh`, and control
+  characters are C-style escaped (`\n`, `\t`, `\r`, `\\`). Archives whose
+  member names contain `..` components are refused: GNU tar rejects them
+  during extraction, so analysis fails loudly rather than emitting a partial
+  manifest. The payload
   is verified against `file` magic first, so a misnamed archive (e.g. gzip
   bytes named `*.tar`) is decoded with the right compressor instead of
   failing; `.tlz` (lzma) and `.taz` (LZW compress) are supported.

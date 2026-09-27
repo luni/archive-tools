@@ -1,7 +1,8 @@
 # decompress.sh
 
-Recursively scans a directory for `xz`, `zstd`, `gzip`, and `bzip2` compressed
-files (including the compound tar extensions `.txz`, `.tzst`, `.tgz`, `.tbz*`)
+Recursively scans a directory for `xz`, `zstd`, `gzip`, `bzip2`, `lzma`
+(`.tlz`, `.lzma`) and LZW/`compress` (`.taz`, `.Z`, `.z`) compressed files
+(including the compound tar extensions `.txz`, `.tzst`, `.tgz`, `.tbz*`)
 and restores each one next to the compressed source, preserving mtimes.
 Files whose extension does not match their actual content are repaired first
 using `file` magic detection — e.g. a `.zip` that is really xz-compressed data
@@ -16,7 +17,7 @@ decompress.sh [options]
 | Option | Description |
 | --- | --- |
 | `-d`, `--dir DIR` | Directory to scan (default: `.`). |
-| `-c`, `--compressor NAME` | Restrict to a decompressor: `pixz`, `pzstd`, `pigz`, `pbzip2`. Repeatable or comma-separated; aliases `xz`→`pixz`, `zstd`/`pzstd`, `gzip`→`pigz`, `bzip2`→`pbzip2`. First use replaces the default set (all four). |
+| `-c`, `--compressor NAME` | Restrict to a decompressor: `pixz`, `pzstd`, `pigz`, `pbzip2`, `lzma`, `lzw`. Repeatable or comma-separated; aliases `xz`→`pixz`, `zstd`/`pzstd`, `gzip`→`pigz`, `bzip2`→`pbzip2`, `z`/`compress`/`uncompress`→`lzw`. First use replaces the default set (all six). |
 | `-j`, `--jobs N` | Decompress up to N files concurrently via GNU `parallel` (default: `1`, sequential). |
 | `-r`, `--remove-source`, `--remove-compressed` | Delete the compressed file after a successful restore. |
 | `--overwrite` | Overwrite an existing output instead of skipping. |
@@ -30,8 +31,8 @@ decompress.sh [options]
   `file`; a mismatch is renamed to the correct extension (`f.zip` containing xz
   data → `f.xz`) unless the target name already exists.
 - **Output naming**: `.txz`→`.tar`, `.tzst`→`.tar`, `.tgz`→`.tar`,
-  `.tbz`/`.tbz2`→`.tar`, otherwise the compression suffix is stripped
-  (`f.xz`→`f`).
+  `.tbz`/`.tbz2`→`.tar`, `.tlz`→`.tar`, `.taz`→`.tar`, otherwise the
+  compression suffix is stripped (`f.xz`→`f`, `f.lzma`→`f`, `f.Z`→`f`).
 - **Atomicity**: decompressed data goes to `OUT.tmp.$$`, is `mv`'d into place,
   and receives the source's mtime. A partial output is removed on failure.
 - **Existing outputs** are skipped unless `--overwrite` is passed.
