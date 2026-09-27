@@ -17,6 +17,8 @@ SHA256_ENABLED=0
 SHA256_APPEND=0
 ARCHIVE_TYPE=""
 INPUT_STREAM_DESC=""
+STREAM_COMPRESSION=""
+ARCHIVE_PASSWORD="${ARCHIVE_PASSWORD:-INVALID_PASSWORD}"
 PZSTD_LEVEL="$DEFAULT_PZSTD_LEVEL"
 declare -a INPUT_STREAM_CMD=()
 
@@ -47,6 +49,10 @@ Options:
       --sha256-append     Append to the SHA-256 file instead of truncating
   -f, --force             Overwrite the output file if it already exists
   -r, --remove-source     Delete the original archive after a successful conversion
+  -p, --password PWD      Password for encrypted .7z/.zip inputs (default:
+                           INVALID_PASSWORD, or set ARCHIVE_PASSWORD). The
+                           password is passed on the 7z command line and may
+                           be visible in process listings.
   -q, --quiet             Suppress progress logs
   -k, --keep-temp         Keep the temporary extraction directory (printed on success;
                            only useful for .7z and .zip inputs)
@@ -56,16 +62,11 @@ EOF
 
 setup_stream_input() {
   local compression
-  case "$ARCHIVE_TYPE" in
-  tar.gz) compression="gz" ;;
-  tar.xz) compression="xz" ;;
-  tar.bz2) compression="bz2" ;;
-  tar.zst) compression="zst" ;;
-  tar) compression="$(detect_tar_compression "$ARCHIVE")" ;;
-  *)
-    die "Streaming conversion is not supported for archive type '$ARCHIVE_TYPE'"
-    ;;
-  esac
+  require_cmd file
+  # Strict sniffing: never stream data into the .tar.zst output unless it
+  # really is a (compressed) tar payload.
+  compression="$(resolve_tar_compression "$ARCHIVE" 1)"
+  STREAM_COMPRESSION="$compression"
 
   case "$compression" in
   gz)
@@ -76,6 +77,12 @@ setup_stream_input() {
     ;;
   xz)
     require_cmd pixz
+    ;;
+  lzma)
+    require_cmd xz
+    ;;
+  Z)
+    require_cmd gzip
     ;;
   zst)
     require_cmd pzstd
@@ -93,6 +100,7 @@ setup_stream_input() {
 
 WORKDIR=""
 TMP_OUTPUT=""
+tmp_sha=""
 cleanup() {
   if [[ "$KEEP_WORKDIR" -eq 0 && -n "$WORKDIR" && -d "$WORKDIR" ]]; then
     rm -rf -- "$WORKDIR" || true
@@ -101,6 +109,9 @@ cleanup() {
   fi
   if [[ -n "$TMP_OUTPUT" && -f "$TMP_OUTPUT" ]]; then
     rm -f -- "$TMP_OUTPUT" || true
+  fi
+  if [[ -n "$tmp_sha" && -f "$tmp_sha" ]]; then
+    rm -f -- "$tmp_sha" || true
   fi
 }
 trap cleanup EXIT INT TERM
@@ -139,6 +150,11 @@ while [[ $# -gt 0 ]]; do
   -r | --remove-source)
     REMOVE_SOURCE=1
     shift
+    ;;
+  -p | --password)
+    [[ $# -lt 2 ]] && die "Missing value for $1"
+    ARCHIVE_PASSWORD="$2"
+    shift 2
     ;;
   -f | --force)
     FORCE=1
@@ -224,17 +240,17 @@ if [[ "$ARCHIVE_TYPE" == "7z" ]]; then
   WORKDIR="$(create_temp_dir "convert-to-tarzst" "$TEMP_PARENT")"
   log "Extracting $ARCHIVE into $WORKDIR ..."
   if [[ "$QUIET" -eq 1 ]]; then
-    7z x -y -bso0 -bsp0 -o"$WORKDIR" -- "$ARCHIVE" >/dev/null
+    7z x -y -bso0 -bsp0 -p"$ARCHIVE_PASSWORD" -o"$WORKDIR" -- "$ARCHIVE" >/dev/null
   else
-    7z x -y -bso0 -bsp1 -o"$WORKDIR" -- "$ARCHIVE"
+    7z x -y -bso0 -bsp1 -p"$ARCHIVE_PASSWORD" -o"$WORKDIR" -- "$ARCHIVE"
   fi
 elif [[ "$ARCHIVE_TYPE" == "zip" ]]; then
   WORKDIR="$(create_temp_dir "convert-to-tarzst" "$TEMP_PARENT")"
   log "Extracting $ARCHIVE into $WORKDIR ..."
   if [[ "$QUIET" -eq 1 ]]; then
-    7z x -y -bso0 -bsp0 -o"$WORKDIR" -- "$ARCHIVE" >/dev/null
+    7z x -y -bso0 -bsp0 -p"$ARCHIVE_PASSWORD" -o"$WORKDIR" -- "$ARCHIVE" >/dev/null
   else
-    7z x -y -bso0 -bsp1 -o"$WORKDIR" -- "$ARCHIVE"
+    7z x -y -bso0 -bsp1 -p"$ARCHIVE_PASSWORD" -o"$WORKDIR" -- "$ARCHIVE"
   fi
 fi
 
@@ -254,11 +270,16 @@ tar_stream() {
 if [[ "$SHA256_ENABLED" -eq 1 ]]; then
   case "$ARCHIVE_TYPE" in
   tar | tar.gz | tar.xz | tar.bz2 | tar.zst)
-    TAR_COMPRESSION="$(detect_tar_compression "$ARCHIVE")"
     log "Computing SHA-256 manifest for tar archive..."
-    if ! write_tar_manifest "$ARCHIVE" "$TAR_COMPRESSION" "$SHA256_FILE"; then
+    # Stage in a temp file so a mid-pass failure cannot leave a partial
+    # manifest behind (the target is prepared/truncated above).
+    tmp_sha="$(mktemp)"
+    if ! write_tar_manifest "$ARCHIVE" "$STREAM_COMPRESSION" "$tmp_sha"; then
       die "Failed to write SHA256 manifest"
     fi
+    cat -- "$tmp_sha" >>"$SHA256_FILE"
+    rm -f -- "$tmp_sha"
+    tmp_sha=""
     ;;
   esac
 fi
@@ -293,9 +314,13 @@ fi
 if [[ "$SHA256_ENABLED" -eq 1 ]]; then
   case "$ARCHIVE_TYPE" in
   7z | zip)
-    if ! write_sha256_manifest "$WORKDIR" "$SHA256_FILE"; then
+    tmp_sha="$(mktemp)"
+    if ! write_sha256_manifest "$WORKDIR" "$tmp_sha"; then
       die "Failed to write SHA256 manifest"
     fi
+    cat -- "$tmp_sha" >>"$SHA256_FILE"
+    rm -f -- "$tmp_sha"
+    tmp_sha=""
     ;;
   esac
 fi

@@ -34,15 +34,23 @@ prepare_file_for_write() {
 }
 
 write_sha256_manifest() {
-	local root="$1" dest="$2" exclude="${3:-}" file rel hash size
+	local root="$1" dest="$2" file rel hash size ex
+	shift 2
+	local -a excludes=("$@")
 	[[ -z "$dest" ]] && return 0
+	root="${root%"${root##*[!/]}"}" # strip trailing slashes
 
 	while IFS= read -r -d '' file; do
-		rel="${file#$root/}"
-		if [[ "$rel" == "$file" ]]; then
+		# Literal prefix strip: ${file#$root/} would treat glob characters in
+		# the root as patterns; a positional substring does not.
+		if [[ "${file:0:${#root}+1}" == "$root/" ]]; then
+			rel="${file:${#root}+1}"
+		else
 			rel="$(basename -- "$file")"
 		fi
-		[[ -n "$exclude" && "$rel" == "$exclude" ]] && continue
+		for ex in "${excludes[@]}"; do
+			[[ -n "$ex" && "$rel" == "$ex" ]] && continue 2
+		done
 		hash="$(sha256sum -- "$file" | awk '{print $1}')"
 		size="$(stat -c '%s' -- "$file")"
 		printf '%s  %s  %s\n' "$hash" "$rel" "$size" >>"$dest"

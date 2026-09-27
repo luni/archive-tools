@@ -285,7 +285,36 @@ _run_convert_to_tarzst_spaces_test() {
   done
 }
 
+_run_convert_to_tarzst_misnamed_test() {
+  local tmpdir="$1"
+  local script="$REPO_ROOT/convert-to-tarzst.sh"
+
+  mkdir -p "$tmpdir/wd"
+  echo data >"$tmpdir/wd/f.txt"
+  tar -C "$tmpdir/wd" -cf "$tmpdir/f.tar" .
+
+  # Regression: gzip bytes disguised as *.tar must be repaired via content
+  # sniffing — previously they were streamed through cat and wrapped raw.
+  gzip -c "$tmpdir/f.tar" >"$tmpdir/misnamed.tar"
+  if ! "$script" -o "$tmpdir/misnamed.tar.zst" "$tmpdir/misnamed.tar" >/dev/null 2>&1; then
+    echo "convert-to-tarzst.sh failed on gzip payload named .tar" >&2
+    return 1
+  fi
+  if ! pzstd -d -c "$tmpdir/misnamed.tar.zst" | tar -tf - | grep -q 'f\.txt'; then
+    echo "Converted output is not a real tar stream" >&2
+    return 1
+  fi
+
+  # Unrecognizable bytes named .tar must be rejected, not silently wrapped.
+  echo garbage >"$tmpdir/junk.tar"
+  if "$script" -o "$tmpdir/junk.tar.zst" "$tmpdir/junk.tar" >/dev/null 2>&1; then
+    echo "convert-to-tarzst.sh silently wrapped non-tar garbage" >&2
+    return 1
+  fi
+}
+
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   run_standard_test "convert-to-tarzst.sh with SHA256 manifests" _run_convert_to_tarzst_suite
   run_standard_test "convert-to-tarzst.sh with spaces" _run_convert_to_tarzst_spaces_test
+  run_standard_test "convert-to-tarzst.sh misnamed input handling" _run_convert_to_tarzst_misnamed_test
 fi

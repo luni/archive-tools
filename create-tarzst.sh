@@ -125,6 +125,7 @@ fi
 
 require_cmd tar
 require_cmd pzstd
+require_cmd realpath
 if [[ "$SHA256_ENABLED" -eq 1 ]]; then
   require_cmd sha256sum
 fi
@@ -143,13 +144,35 @@ TMP_OUTPUT="$(mktemp -p "$(dirname -- "$OUTPUT")" "$(basename -- "$OUTPUT").tmp.
 # mktemp creates the destination path as a file; remove it so pzstd can create it.
 rm -f -- "$TMP_OUTPUT"
 
+# Never tar up the files this script writes: the temp output (which pzstd
+# creates while tar is still reading), a pre-existing output (--force), and
+# the manifest (created empty by prepare_file_for_write) may all live inside
+# SOURCE_DIR.
+tar_excludes=()
+sha_rel=""
+out_rel=""
+abs_src="$(realpath -m -- "$SOURCE_DIR")"
+for p in "$OUTPUT" "$TMP_OUTPUT" "$SHA256_FILE"; do
+  [[ -z "$p" ]] && continue
+  rel="$(realpath -m --relative-to="$abs_src" -- "$p")"
+  [[ "$rel" == ".."* || "$rel" == /* || "$rel" == "." ]] && continue
+  [[ -n "$SHA256_FILE" && "$p" == "$SHA256_FILE" ]] && sha_rel="$rel"
+  [[ "$p" == "$OUTPUT" ]] && out_rel="$rel"
+  esc="${rel//\\/\\\\}"
+  esc="${esc//\[/\\[}"
+  esc="${esc//\]/\\]}"
+  esc="${esc//\*/\\*}"
+  esc="${esc//\?/\\?}"
+  tar_excludes+=("--exclude=./$esc")
+done
+
 log "Creating tar.zst at $OUTPUT from $SOURCE_DIR ..."
 (
   cd "$SOURCE_DIR"
   if [[ -z "$(find . -mindepth 1 -print -quit)" ]]; then
-    tar --numeric-owner -cf - --files-from /dev/null
+    tar --numeric-owner "${tar_excludes[@]}" -cf - --files-from /dev/null
   else
-    tar --numeric-owner -cf - .
+    tar --numeric-owner "${tar_excludes[@]}" -cf - .
   fi
 ) | pzstd $PZSTD_LEVEL -q -o "$TMP_OUTPUT"
 
@@ -161,7 +184,7 @@ if ! touch -r "$SOURCE_DIR" "$OUTPUT"; then
 fi
 
 if [[ "$SHA256_ENABLED" -eq 1 ]]; then
-  write_sha256_manifest "$SOURCE_DIR" "$SHA256_FILE"
+  write_sha256_manifest "$SOURCE_DIR" "$SHA256_FILE" "$sha_rel" "$out_rel"
 fi
 
 if [[ "$REMOVE_SOURCE" -eq 1 ]]; then
