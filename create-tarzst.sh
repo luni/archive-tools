@@ -28,7 +28,7 @@ Options:
   -o, --output FILE   Destination tar.zst path (default: DIRECTORY basename + .tar.zst)
       --pzstd-level -#
                       Override pzstd compression level (default: -10)
-      --sha256        Emit SHA-256 manifest (default: DIRECTORY basename + .sha256)
+      --sha256        Emit SHA-256 manifest (default: DIRECTORY + .sha256)
       --sha256-file FILE
                       Emit SHA-256 manifest to FILE
       --sha256-append Append to the SHA-256 file instead of truncating

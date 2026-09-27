@@ -16,7 +16,7 @@ compress.sh [options]
 | --- | --- |
 | `-d`, `--dir DIR` | Directory to scan (default: `.`). |
 | `-t`, `--threshold SIZE` | Small/big split (default: `100MiB`). Accepts `100M`, `200MiB`, `50000000`, ... |
-| `-j`, `--jobs N` | Parallel jobs for small files (default: `8`). |
+| `-j`, `--jobs N` | Parallel jobs for small files (default: `8`; joined `-jN` form also works). |
 | `--big-jobs N` | Parallel jobs for big files (default: `1`). |
 | `--small TOOL` | Compressor for small files: `xz` or `zstd` (default: `xz`). |
 | `--big TOOL` | Compressor for big files: `pixz`, `xz`, `pzstd`, or `zstd` (default: `pixz`). |
@@ -43,15 +43,19 @@ compress.sh [options]
   regenerated (there is no `--force`; delete the output first to recompress).
 - **Small files** run through GNU `parallel -j N`; **big files** are piped
   through `pv -ptebar` into the compressor, so every big file shows a live
-  progress bar.
+  progress bar. `--big xz`/`--big zstd` use the multithreaded variants
+  (`-T0`). The `parallel --bar` progress display is enabled only when a
+  controlling tty exists, so non-interactive runs stay quiet.
 - **Atomicity**: each file is compressed to a temporary sibling (`FILE.ext.tmp.$$`),
   `mv`'d into place, and gets the original's mtime via `touch -r`. The original
   is deleted only after the new file exists (or kept with `-k`).
 - **Checksum capture**: `--sha1`/`--sha256` lines are written before compression
   starts for each file, so a manifest of *originals* can be kept. Manifest lines
-  use the sha256sum layout `hash  path`.
-- **Required tools**: `parallel`, `file`, `stat`, plus the selected compressors.
-  The script validates them up front and exits early with a clear error.
+  use the sha256sum layout `hash  path`. The checksum files themselves are
+  excluded from the scan even when their name matches an active `--ext`.
+- **Required tools**: `parallel`, `file`, `pv`, `stat`, plus the selected
+  compressors. The script validates them up front and exits early with a
+  clear error.
 
 ## Examples
 

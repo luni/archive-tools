@@ -13,7 +13,7 @@ hash-folder.sh [options] DIRECTORY [OUTPUT_FILE]
 | Argument / option | Description |
 | --- | --- |
 | `DIRECTORY` | Directory to hash (required). |
-| `OUTPUT_FILE` | Manifest destination (default: `DIRECTORY` name minus archive-style suffixes + `.sha256`, next to the directory). |
+| `OUTPUT_FILE` | Manifest destination (default: `DIRECTORY` name + `.sha256`, next to the directory). It is excluded from its own scan when placed inside `DIRECTORY`. |
 | `-q`, `--quiet` | Suppress progress logs. |
 | `-h`, `--help` | Show help. |
 

@@ -35,6 +35,9 @@ create-tarzst.sh [options] DIRECTORY
 - **Manifest**: generated with `find` + `sha256sum`, one
   `SHA256␣␣path␣␣size` line per file sorted by path — the same format used by
   `analyze-archive.sh`, `hash-folder.sh`, and `find-duplicate-sha256.sh`.
+- **Self-exclusion**: when `-o` or `--sha256-file` point inside SOURCE_DIR,
+  those files (and the in-flight temp output) are excluded from the tar
+  stream and the manifest — the archive never contains itself.
 - **`--remove-source` is destructive**: it recursively deletes the input
   directory once the archive exists; make sure the archive verified first.
 
@@ -48,7 +51,7 @@ create-tarzst.sh [options] DIRECTORY
 
 ## Requirements
 
-`tar`, `pzstd`, and `sha256sum` when `--sha256*` is used.
+`tar`, `pzstd`, `realpath`, and `sha256sum` when `--sha256*` is used.
 
 ## See also
 

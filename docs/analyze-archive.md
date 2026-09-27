@@ -18,7 +18,7 @@ analyze-archive.sh [options] ARCHIVE
 
 | Option | Description |
 | --- | --- |
-| `-o`, `--output FILE` | Target manifest path (default: `ARCHIVE` minus archive suffixes + `.sha256`, next to the archive). |
+| `-o`, `--output FILE` | Target manifest path (default: `ARCHIVE` + `.sha256`, e.g. `a.tar.zst` → `a.tar.zst.sha256`, next to the archive). |
 | `-q`, `--quiet` | Suppress progress logs (digest lines are still printed to stdout). |
 | `--overwrite` | Overwrite an existing manifest (default: refuse). |
 | `-p`, `--password PWD` | Password for encrypted archives (default: `INVALID_PASSWORD`; may also be supplied via the `ARCHIVE_PASSWORD` environment variable). |
@@ -28,8 +28,13 @@ analyze-archive.sh [options] ARCHIVE
 
 - **Tarballs** (all compression flavors) stream through
   `tar --to-command` in a single decompression pass: each member's bytes are
-  piped to `sha256sum` while `wc -c` captures the exact size. Entries are fed
-  to tar via `--files-from` with NUL separation, so unusual names survive.
+  piped to `sha256sum` while the exported `TAR_SIZE`/`TAR_FILETYPE` variables
+  supply the size and filter non-regular members (directories, links). Member
+  names are normalized — a leading `./` is stripped so the manifest matches
+  directory manifests from `hash-folder.sh`/`create-tarzst.sh`. The payload
+  is verified against `file` magic first, so a misnamed archive (e.g. gzip
+  bytes named `*.tar`) is decoded with the right compressor instead of
+  failing; `.tlz` (lzma) and `.taz` (LZW compress) are supported.
 - **7z / ZIP / RAR** are also processed in a single pass: the archive's own
   listing provides each file's uncompressed size, the archiver streams all
   payloads to stdout in the same order (`7z x -so` / `unrar p`), and each
@@ -67,8 +72,9 @@ find /data -type f \( -name '*.tar*' -o -name '*.7z' -o -name '*.zip' -o -name '
 
 ## Requirements
 
-- `7z` or `7zr` for `.7z`/`.zip`, `unrar` for `.rar`, `tar` + the matching
-  decompressor (`pigz`, `pixz`, `pbzip2`, `pzstd`) for tarballs, `sha256sum`.
+- `7z` or `7zr` for `.7z`/`.zip`, `unrar` for `.rar`, `tar` + `file` + the
+  matching decompressor (`pigz`, `pixz`, `pbzip2`, `pzstd`; `xz` for `.tlz`,
+  `gzip` for `.taz`) for tarballs, `sha256sum`.
 
 ## See also
 

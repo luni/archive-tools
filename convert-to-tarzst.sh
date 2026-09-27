@@ -44,7 +44,7 @@ Options:
       --pzstd-level -#    Override pzstd compression level (default: -10)
       --temp-dir DIR      Create the temporary extraction directory under DIR
                            (only applies to .7z and .zip inputs)
-      --sha256            Emit SHA-256 manifest (defaults to ARCHIVE basename + .sha256)
+      --sha256            Emit SHA-256 manifest (defaults to ARCHIVE + .sha256)
       --sha256-file FILE  Emit SHA-256 manifest to FILE
       --sha256-append     Append to the SHA-256 file instead of truncating
   -f, --force             Overwrite the output file if it already exists

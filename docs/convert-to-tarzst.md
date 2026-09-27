@@ -9,7 +9,10 @@ used depending on the input:
   repacked through `tar --numeric-owner` into `pzstd`.
 - **`.tar`, `.tar.gz/.tgz/.taz`, `.tar.xz/.txz/.tlz`, `.tar.bz2/.tbz/.tbz2`,
   `.tar.zst/.tzst`**: streamed directly — decompressed (or `cat` for plain
-  `.tar`) straight into `pzstd`, no temporary workspace needed.
+  `.tar`) straight into `pzstd`, no temporary workspace needed. The payload
+  is verified with `file` magic first: a compressed stream named `*.tar` is
+  decoded with its real decompressor, and content that is not a (compressed)
+  tar is rejected rather than wrapped into a bogus `.tar.zst`.
 
 ## Usage
 
@@ -23,9 +26,10 @@ convert-to-tarzst.sh [options] ARCHIVE
 | `--pzstd-level -#` | pzstd compression level (default: `-10`). |
 | `--temp-dir DIR` | Place the `.7z`/`.zip` extraction workspace under DIR instead of the system temp dir. |
 | `-k`, `--keep-temp` | Keep the temporary extraction directory after the run (`.7z`/`.zip` only; path is printed). |
-| `--sha256` | Write a `hash  path  size` manifest of the archive contents (default: `ARCHIVE`-basename + `.sha256`). |
+| `--sha256` | Write a `hash  path  size` manifest of the archive contents (default: `ARCHIVE` + `.sha256`, e.g. `a.7z` → `a.7z.sha256`). |
 | `--sha256-file FILE` | Write the manifest to FILE instead. |
 | `--sha256-append` | Append to the manifest file instead of truncating. |
+| `-p`, `--password PWD` | Password for encrypted `.7z`/`.zip` inputs (default: `INVALID_PASSWORD`, or set `ARCHIVE_PASSWORD`). It is passed on the `7z` command line and may appear in process listings. |
 | `-f`, `--force` | Overwrite an existing output. |
 | `-r`, `--remove-source` | Delete the input archive after a successful conversion. |
 | `-q`, `--quiet` | Suppress progress logs (and `7z` extraction output). |
@@ -50,22 +54,24 @@ convert-to-tarzst.sh [options] ARCHIVE
   follows the remaining volumes automatically. `.rar`/`.partN.rar` inputs are
   not supported for conversion — inspect them with `analyze-archive.sh`
   instead.
-- **Encrypted inputs** are not supported (there is no password option); the
-  `7z` extraction will fail cleanly.
+- **Encrypted inputs**: `.7z`/`.zip` archives can be extracted with
+  `-p`/`--password` (or `ARCHIVE_PASSWORD`). Without the right password the
+  `7z` extraction fails cleanly and no output is produced.
 
 ## Examples
 
 ```bash
 ./convert-to-tarzst.sh backups.7z                 # -> backups.tar.zst
-./convert-to-tarzst.sh reports.zip --sha256       # + reports.sha256
+./convert-to-tarzst.sh reports.zip --sha256       # + reports.zip.sha256
 ./convert-to-tarzst.sh logs.tar                   # plain tar streams through cat
 ./convert-to-tarzst.sh old.tar.bz2 -o /out/new.tar.zst --remove-source
 ```
 
 ## Requirements
 
-`7z` (`.7z`/`.zip` inputs), `tar`, `pzstd`, plus `pigz`/`pixz`/`pbzip2`
-matching the tar compression, and `sha256sum` when `--sha256*` is used.
+`7z` (`.7z`/`.zip` inputs), `tar`, `pzstd`, `file` (content sniffing), plus
+`pigz`/`pixz`/`pbzip2` (`xz` for `.tlz`, `gzip` for `.taz`) matching the tar
+compression, and `sha256sum` when `--sha256*` is used.
 
 ## See also
 

@@ -36,7 +36,7 @@ Description:
   and saves the list of hashes to an output file sorted by path.
 
 Options:
-  -o, --output FILE   Target SHA-256 manifest (default: ARCHIVE basename + .sha256)
+  -o, --output FILE   Target SHA-256 manifest (default: ARCHIVE + .sha256)
   -q, --quiet         Suppress progress logs
       --overwrite     Overwrite existing manifest if present
   -p, --password PWD  Password for encrypted archives (default: INVALID_PASSWORD,

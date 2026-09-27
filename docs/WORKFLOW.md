@@ -107,8 +107,10 @@ find /data -type f \( -name '*.tar*' -o -name '*.7z' -o -name '*.zip' -o -name '
   parallel -0 -j8 --eta ./analyze-archive.sh {}
 ```
 
-Each archive gets an `ARCHIVE-stem.sha256` listing `hash  path  size` per
-member, computed in a single streaming pass — nothing is extracted to disk.
+Each archive gets an `ARCHIVE.sha256` (full archive name + suffix, so
+`a.tar`, `a.tar.zst`, and `a.7z` produce three distinct manifests) listing
+`hash  path  size` per member, computed in a single streaming pass —
+nothing is extracted to disk.
 
 Optionally fingerprint plain directories too, so they participate in dedupe:
 
@@ -129,9 +131,13 @@ Optionally fingerprint plain directories too, so they participate in dedupe:
 ./find-duplicate-sha256.sh -A -D /data
 ```
 
-Deletion removes the manifest **and** the archive **and** same-stem siblings
-(`.sha1` files, logs). At least one member of every identical group is always
-kept; `-y` auto-keeps the first (sorted) one.
+Deletion removes the manifest **and** the archive it describes (`X` for
+`X.sha256`) **and** allowlisted siblings of the archive stem — other archive
+payloads, split chunks (`.7z.NNN`, `.zNN`, `.partN.rar`, ...), and
+checksum/meta sidecars (`.sha1`, `.md5`, `.sfv`, `.sig`, `.meta`,
+`.torrent`, `.nfo`, `.info`). Files outside that allowlist are never
+touched. At least one member of every identical group is always kept; `-y`
+auto-keeps the first (sorted) one.
 
 ### 5. Restore when needed — `decompress.sh`
 

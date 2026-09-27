@@ -25,8 +25,9 @@ Directories default to `.` when none are given.
 ## Manifest parsing
 
 The parser accepts the standard layout `SHA256␣␣path␣␣size` produced by this
-toolset, plus looser variants: `hash path` (single space), `hash *path`
-(sha256sum binary-mode marker), and files without a size column. Blank lines,
+toolset, plus looser variants: `hash path` (single space) and lines without a
+size column. Entry paths are taken verbatim — even a leading `*` is kept.
+Blank lines,
 `#` comments, and `%%`/`%%%%` hashdeep headers are ignored; anything else is
 warned about on stderr and counted in the summary. Aggregation is done with a
 sorted record stream rather than in-memory tables, so very large manifest
@@ -54,8 +55,16 @@ presented for selection — `fzf` multi-select when available, otherwise a
 numbered prompt — and choosing a manifest deletes:
 
 - the `.sha256` manifest itself,
-- the archive file with the same stem (`foo.tar.zst` for `foo.sha256`),
-- every sibling file matching the stem (`foo.sha1`, `foo.log`, ...).
+- the archive it describes: the manifest path minus `.sha256` (with the
+  current naming convention `foo.tar.zst.sha256` describes `foo.tar.zst`;
+  for legacy `foo.sha256` manifests that is the plain file `foo`),
+- allowlisted siblings sharing the stem: archive payloads (`*.tar*`,
+  `*.7z`, `*.zip`, `*.rar`), split-volume chunks (`*.7z.NNN`, `*.zNN`,
+  `*.rNN`, `*.partN.rar`), and checksum/meta sidecars (`*.sha1`, `*.md5`,
+  `*.sfv`, `*.sig`, `*.meta`, `*.torrent`, `*.nfo`, `*.info`).
+
+Files outside that allowlist (notes, logs, documents, other data) are never
+deleted, and names containing glob metacharacters are matched literally.
 
 Safety rails: the tool never deletes *every* member of a group (at least one
 must stay), `-y` keeps the alphabetically-first manifest, and the per-file
