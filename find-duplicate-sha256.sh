@@ -83,7 +83,8 @@ collect_related_basename_files() {
   # the stem is glob-escaped).
   local -a split_globs=(
     "7z.[0-9][0-9][0-9]" "zip.[0-9][0-9][0-9]" "rar.[0-9][0-9][0-9]"
-    "z[0-9][0-9]" "r[0-9][0-9]" "part[0-9]*.rar"
+    "z[0-9][0-9]" "r[0-9][0-9]"
+    "part[0-9].rar" "part[0-9][0-9].rar" "part[0-9][0-9][0-9].rar"
   )
 
   declare -A seen=()
@@ -369,10 +370,13 @@ if ((IDENTICAL_ONLY)); then
 fi
 
 manifests_scanned=0
+# sort -zu dedupes: overlapping dir arguments (e.g. "." and "./sub") make find
+# emit the same manifest twice, which would otherwise group a manifest with
+# itself — and -D would then delete the only archive copy.
 while IFS= read -r -d '' manifest; do
   manifests_scanned=$((manifests_scanned + 1))
   process_manifest "$manifest"
-done < <(find "${dirs[@]}" -type f -name '*.sha256' -print0)
+done < <(find "${dirs[@]}" -type f -name '*.sha256' -print0 | LC_ALL=C sort -zu)
 
 if [[ "$manifests_scanned" -eq 0 ]]; then
   die "No .sha256 manifests found under the provided directory set."
@@ -388,9 +392,17 @@ if ((IDENTICAL_ONLY)); then
   for signature in "${!SIGNATURE_MANIFESTS[@]}"; do
     IFS=$GROUP_SEP read -r -a manifests_in_group <<<"${SIGNATURE_MANIFESTS["$signature"]}"
     if ((${#manifests_in_group[@]} > 1)); then
-      identical_groups_found=1
       mapfile -t manifests_in_group < <(printf '%s\n' "${manifests_in_group[@]}" | LC_ALL=C sort)
       entries="${MANIFEST_ENTRY_COUNTS["${manifests_in_group[0]}"]:-0}"
+      # Empty or unparsable manifests all share the empty-content signature;
+      # they carry no evidence that the archives are actually identical, so
+      # never report (or delete) them as a group.
+      if [[ "$entries" -eq 0 ]]; then
+        printf 'note: skipping %d empty/unparsable manifest(s) sharing the empty signature\n' \
+          "${#manifests_in_group[@]}" >&2
+        continue
+      fi
+      identical_groups_found=1
       printf '\nArchives with identical contents (%d entries):\n' "$entries"
       for manifest in "${manifests_in_group[@]}"; do
         printf '  - %s\n' "$manifest"
