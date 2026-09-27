@@ -436,12 +436,15 @@ DEFAULT_XZ_LEVEL="-5"
 DEFAULT_ZSTD_LEVEL="-6"
 DEFAULT_PZSTD_LEVEL="-10"
 
-# Common compressor mappings
+# Common compressor mappings. lzma/lzw are format names, not binaries —
+# decompress.sh maps them to xz/gzip for the tool check and dispatch.
 declare -A COMPRESSOR_EXTS=(
 	[pixz]="xz txz"
 	[pzstd]="zst tzst"
 	[pigz]="gz tgz"
 	[pbzip2]="bz2 tbz tbz2"
+	[lzma]="tlz lzma"
+	[lzw]="taz z"
 )
 
 # Temp directory management

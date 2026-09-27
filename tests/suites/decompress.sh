@@ -458,6 +458,69 @@ _run_overwrite_test() {
   done
 }
 
+run_lzma_lzw_test() {
+  run_standard_test "decompress.sh lzma/LZW formats test" _run_lzma_lzw_test
+}
+
+_run_lzma_lzw_test() {
+  local tmpdir="$1"
+
+  mkdir -p "$tmpdir/wd"
+  echo "lzma payload" >"$tmpdir/wd/a.txt"
+  tar -C "$tmpdir" -cf "$tmpdir/lz.src.tar" wd/
+  xz --format=lzma -c "$tmpdir/lz.src.tar" >"$tmpdir/lz.tlz"
+  rm -f "$tmpdir/lz.src.tar"
+
+  "$DECOMPRESS_SCRIPT" --dir "$tmpdir" >/dev/null 2>&1
+  if [[ ! -f "$tmpdir/lz.tar" ]]; then
+    echo "lzma: .tlz was not decompressed to .tar" >&2
+    return 1
+  fi
+  if ! tar -tf "$tmpdir/lz.tar" 2>/dev/null | grep -q 'wd/a.txt'; then
+    echo "lzma: decompressed tar is not a valid archive" >&2
+    return 1
+  fi
+  rm -f "$tmpdir/lz.tar" "$tmpdir/lz.tlz"
+
+  # Raw .lzma (non-tar) payload
+  echo "raw lzma payload" >"$tmpdir/raw.bin"
+  xz --format=lzma -c "$tmpdir/raw.bin" >"$tmpdir/raw.lzma"
+  rm -f "$tmpdir/raw.bin"
+  "$DECOMPRESS_SCRIPT" --dir "$tmpdir" >/dev/null 2>&1
+  if [[ "$(cat "$tmpdir/raw" 2>/dev/null)" != "raw lzma payload" ]]; then
+    echo "lzma: .lzma file was not decompressed correctly" >&2
+    return 1
+  fi
+
+  # compress'd LZW (.Z / .taz) — only when ncompress is installed
+  if command -v compress >/dev/null 2>&1; then
+    echo "lzw payload" >"$tmpdir/z.bin"
+    if ! compress -c "$tmpdir/z.bin" >"$tmpdir/z.tar.Z" 2>/dev/null; then
+      compress "$tmpdir/z.bin"
+      mv -- "$tmpdir/z.bin.Z" "$tmpdir/z.tar.Z"
+    fi
+    rm -f "$tmpdir/z.bin"
+    cp "$tmpdir/z.tar.Z" "$tmpdir/z.taz"
+    "$DECOMPRESS_SCRIPT" --dir "$tmpdir" >/dev/null 2>&1
+    if [[ ! -f "$tmpdir/z.tar" ]]; then
+      echo "lzw: .tar.Z/.taz was not decompressed to .tar" >&2
+      return 1
+    fi
+  fi
+
+  # Uppercase extension dispatch: find scans case-insensitively and the
+  # decompress case must match lowercased names (F.TGZ -> F.tar).
+  echo "upper payload" >"$tmpdir/up.bin"
+  tar -cf "$tmpdir/up.tar" -C "$tmpdir" up.bin
+  gzip -c "$tmpdir/up.tar" >"$tmpdir/UPPER.TGZ"
+  rm -f "$tmpdir/up.bin" "$tmpdir/up.tar"
+  "$DECOMPRESS_SCRIPT" --dir "$tmpdir" >/dev/null 2>&1
+  if [[ ! -f "$tmpdir/UPPER.tar" ]]; then
+    echo "case: uppercase .TGZ was not dispatched to a decompressor" >&2
+    return 1
+  fi
+}
+
 run_decompress_suite() {
   run_single_decompress_test false "keep-compressed"
   run_single_decompress_test true "remove-compressed"
@@ -467,6 +530,7 @@ run_decompress_suite() {
   run_comprehensive_magic_detection_test
   run_edge_cases_test
   run_overwrite_test
+  run_lzma_lzw_test
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

@@ -11,7 +11,7 @@ REMOVE_COMPRESSED=0
 OVERWRITE=0
 CUSTOM_COMPRESSORS=0
 JOBS=1
-SUPPORTED_COMPRESSORS=(pixz pzstd pigz pbzip2)
+SUPPORTED_COMPRESSORS=(pixz pzstd pigz pbzip2 lzma lzw)
 SUPPORTED_COMPRESSORS_STR="${SUPPORTED_COMPRESSORS[*]}"
 MAGIC_ONLY_EXTENSIONS=(zip rar 7z)
 
@@ -22,7 +22,8 @@ Usage:
 
 Options:
   -d, --dir DIR             Directory to scan for compressed files (default: .)
-  -c, --compressor NAME     Limit to a decompressor (pixz, pzstd, pigz, pbzip2).
+  -c, --compressor NAME     Limit to a decompressor (pixz, pzstd, pigz, pbzip2,
+                            lzma, lzw).
                             May be repeated or receive a comma-separated list.
                             First use replaces defaults.
   -j, --jobs N              Decompress up to N files in parallel via GNU
@@ -50,7 +51,7 @@ add_compressors() {
     part="${part,,}"
     [[ -z "$part" ]] && continue
     case "$part" in
-    pixz | pzstd | pigz | pbzip2)
+    pixz | pzstd | pigz | pbzip2 | lzma | lzw)
       SUPPORTED_COMPRESSORS+=("$part")
       ;;
     xz)
@@ -64,6 +65,9 @@ add_compressors() {
       ;;
     bzip2 | pbzip2)
       SUPPORTED_COMPRESSORS+=("pbzip2")
+      ;;
+    z | compress | uncompress)
+      SUPPORTED_COMPRESSORS+=("lzw")
       ;;
     *)
       die "Unsupported compressor: $part"
@@ -137,7 +141,7 @@ done
 [[ -d "$SCAN_DIR" ]] || die "Scan directory not found: $SCAN_DIR"
 
 if [[ "${#SUPPORTED_COMPRESSORS[@]}" -eq 0 ]]; then
-  die "At least one decompressor must be enabled (pixz, pzstd, pigz, or pbzip2)."
+  die "At least one decompressor must be enabled (pixz, pzstd, pigz, pbzip2, lzma, or lzw)."
 fi
 
 SUPPORTED_COMPRESSORS_STR="${SUPPORTED_COMPRESSORS[*]}"
@@ -149,8 +153,14 @@ if [[ "$JOBS" -gt 1 ]]; then
   require_cmd parallel
 fi
 
+# lzma/lzw are format names; the binaries providing them are xz and gzip.
 for comp in "${SUPPORTED_COMPRESSORS[@]}"; do
-  command -v "$comp" >/dev/null 2>&1 || die "Required tool '$comp' is not on PATH."
+  case "$comp" in
+  lzma) bin=xz ;;
+  lzw) bin=gzip ;;
+  *) bin="$comp" ;;
+  esac
+  command -v "$bin" >/dev/null 2>&1 || die "Required tool '$bin' (for $comp) is not on PATH."
 done
 
 # 'file' powers misnamed-archive detection; degrade to a warning rather than
@@ -215,30 +225,32 @@ decompress_file() {
     :
   fi
 
-  case "$f" in
+  # Match on the lowercased name: find scans case-insensitively, so a file
+  # like "F.TGZ" reaches this point and must be dispatched like ".tgz".
+  case "${f,,}" in
   *.txz)
     compressor="pixz"
-    out="${f%.txz}.tar"
+    out="${f%.*}.tar"
     ;;
   *.xz)
     compressor="pixz"
-    out="${f%.xz}"
+    out="${f%.*}"
     ;;
   *.tzst)
     compressor="pzstd"
-    out="${f%.tzst}.tar"
+    out="${f%.*}.tar"
     ;;
   *.zst)
     compressor="pzstd"
-    out="${f%.zst}"
+    out="${f%.*}"
     ;;
   *.tgz)
     compressor="pigz"
-    out="${f%.tgz}.tar"
+    out="${f%.*}.tar"
     ;;
   *.gz)
     compressor="pigz"
-    out="${f%.gz}"
+    out="${f%.*}"
     ;;
   *.tbz | *.tbz2)
     compressor="pbzip2"
@@ -246,7 +258,23 @@ decompress_file() {
     ;;
   *.bz2)
     compressor="pbzip2"
-    out="${f%.bz2}"
+    out="${f%.*}"
+    ;;
+  *.tlz)
+    compressor="lzma"
+    out="${f%.*}.tar"
+    ;;
+  *.lzma)
+    compressor="lzma"
+    out="${f%.*}"
+    ;;
+  *.taz)
+    compressor="lzw"
+    out="${f%.*}.tar"
+    ;;
+  *.z)
+    compressor="lzw"
+    out="${f%.*}"
     ;;
   *)
     local actual_ext expected_ext
@@ -302,6 +330,18 @@ decompress_file() {
     ;;
   pbzip2)
     if pbzip2 -dck "$f" >"$tmp"; then :; else
+      rm -f -- "$tmp"
+      return 1
+    fi
+    ;;
+  lzma)
+    if xz -dc -- "$f" >"$tmp"; then :; else
+      rm -f -- "$tmp"
+      return 1
+    fi
+    ;;
+  lzw)
+    if gzip -dc -- "$f" >"$tmp"; then :; else
       rm -f -- "$tmp"
       return 1
     fi
