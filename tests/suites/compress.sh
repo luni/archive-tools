@@ -178,12 +178,44 @@ _run_checksum_self_exclusion_test() {
   }
 }
 
+run_unreadable_source_test() {
+  run_standard_test "compress.sh fails loudly on unreadable input" _run_unreadable_source_test
+}
+
+# Regression: job shells under `parallel` run without pipefail/errexit, so a
+# failed pv used to produce a valid-looking empty archive and delete the
+# source. The job must now fail and leave the source untouched.
+_run_unreadable_source_test() {
+  local tmpdir="$1"
+  generate_test_file "$tmpdir/big.sql" 4096 "unreadable-source"
+  chmod 000 "$tmpdir/big.sql"
+
+  local output rc=0
+  output="$("$COMPRESS_SCRIPT" --dir "$tmpdir" --ext sql --threshold 1024 --big pzstd -q </dev/null 2>&1)" || rc=$?
+
+  chmod 644 "$tmpdir/big.sql"
+  if [[ "$rc" -eq 0 ]]; then
+    echo "compress.sh succeeded on unreadable input" >&2
+    echo "$output" >&2
+    return 1
+  fi
+  if [[ ! -f "$tmpdir/big.sql" ]]; then
+    echo "Source file was deleted despite failed compression" >&2
+    return 1
+  fi
+  if [[ -e "$tmpdir/big.sql.zst" ]]; then
+    echo "Partial/garbage compressed output was left behind" >&2
+    return 1
+  fi
+}
+
 run_compress_suite() {
   run_single_compress_test xz xz "xz-only"
   run_single_compress_test zstd zstd "zstd-only"
   run_single_compress_test zstd zstd "zstd-big-parallel" 2
   run_big_no_checksum_test
   run_checksum_self_exclusion_test
+  run_unreadable_source_test
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

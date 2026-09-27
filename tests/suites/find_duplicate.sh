@@ -149,6 +149,45 @@ EOF
     echo "Redundant manifest/archive/related files not removed under --delete-identical" >&2
     return 1
   fi
+
+  # Regression: overlapping directory arguments must not group a manifest
+  # with itself — that used to make -D delete the only archive copy.
+  local solo_dir="$tmpdir/solo"
+  mkdir -p "$solo_dir/sub"
+  printf '%s  f.txt  2\n' "$HASH_UNIQUE" >"$solo_dir/sub/only.sha256"
+  : >"$solo_dir/sub/only"
+  local dup_dir_output
+  if ! dup_dir_output="$("$REPO_ROOT/find-duplicate-sha256.sh" -A -D -y \
+      "$solo_dir" "$solo_dir/" "$solo_dir/sub" 2>&1)"; then
+    echo "find-duplicate-sha256.sh failed on overlapping dirs" >&2
+    echo "$dup_dir_output" >&2
+    return 1
+  fi
+  if [[ "$dup_dir_output" == *"Archives with identical contents"* || ! -f "$solo_dir/sub/only" || ! -f "$solo_dir/sub/only.sha256" ]]; then
+    echo "Overlapping dirs formed a self-group or deleted the only copy" >&2
+    echo "$dup_dir_output" >&2
+    return 1
+  fi
+
+  # Regression: empty/corrupt manifests share the empty-content signature and
+  # must never be reported or deleted as an identical group.
+  local junk_dir="$tmpdir/junk"
+  mkdir -p "$junk_dir"
+  : >"$junk_dir/a"
+  : >"$junk_dir/b"
+  printf 'garbage line\n' >"$junk_dir/a.sha256"
+  printf 'more junk\n' >"$junk_dir/b.sha256"
+  local junk_output
+  if ! junk_output="$("$REPO_ROOT/find-duplicate-sha256.sh" -A -D -y "$junk_dir" 2>&1)"; then
+    echo "find-duplicate-sha256.sh failed on corrupt manifests" >&2
+    echo "$junk_output" >&2
+    return 1
+  fi
+  if [[ ! -f "$junk_dir/a" || ! -f "$junk_dir/b" || ! -f "$junk_dir/a.sha256" || ! -f "$junk_dir/b.sha256" ]]; then
+    echo "Corrupt-manifest group deleted real files" >&2
+    echo "$junk_output" >&2
+    return 1
+  fi
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

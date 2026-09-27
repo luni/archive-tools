@@ -365,18 +365,21 @@ for dir in "${dirs[@]}"; do
   [[ -d "$dir" ]] || die "Directory not found: $dir"
 done
 
+require_tool realpath
 if ((IDENTICAL_ONLY)); then
   require_tool sha256sum
 fi
 
 manifests_scanned=0
-# sort -zu dedupes: overlapping dir arguments (e.g. "." and "./sub") make find
-# emit the same manifest twice, which would otherwise group a manifest with
-# itself — and -D would then delete the only archive copy.
+# Canonicalize + dedupe: overlapping dir arguments (e.g. "." and "./sub", or
+# "sub" and "sub/") can surface the same manifest via different path strings;
+# a manifest must never end up in an "identical" group with itself, because
+# -D would then delete the only archive copy.
 while IFS= read -r -d '' manifest; do
+  manifest="$(realpath -m -- "$manifest")"
   manifests_scanned=$((manifests_scanned + 1))
   process_manifest "$manifest"
-done < <(find "${dirs[@]}" -type f -name '*.sha256' -print0 | LC_ALL=C sort -zu)
+done < <(find "${dirs[@]}" -type f -name '*.sha256' -exec realpath -mz -- {} + | LC_ALL=C sort -zu)
 
 if [[ "$manifests_scanned" -eq 0 ]]; then
   die "No .sha256 manifests found under the provided directory set."
