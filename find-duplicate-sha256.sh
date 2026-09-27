@@ -47,27 +47,68 @@ declare -A MANIFEST_ENTRY_COUNTS=()
 RECORDS_FILE="$(mktemp)"
 trap 'rm -f "$RECORDS_FILE"' EXIT
 
+# Escape glob metacharacters so a filename can be embedded in a glob pattern
+# and still match only itself.
+glob_escape() {
+  local s="$1" out="" i c
+  for ((i = 0; i < ${#s}; i++)); do
+    c="${s:i:1}"
+    case "$c" in
+    \* | \? | \[ | \] | \\) out+="\\$c" ;;
+    *) out+="$c" ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+
 collect_related_basename_files() {
   local manifest="$1" archive="$2" out_var="$3"
   local -n __out_ref="$out_var"
   __out_ref=()
 
-  local base_no_sha="${manifest%.sha256}"
-  local dir
+  local base_no_sha="${manifest%.sha256}" dir stem
   dir="$(dirname -- "$manifest")"
-  local stem
   stem="$(basename -- "$base_no_sha")"
 
+  # Narrow allowlist: only archive payloads, split chunks, and
+  # manifest-adjacent sidecars belong to an archive's file group. A free
+  # 'stem.*' glob would also sweep up unrelated documents (notes, logs,
+  # other data files) sharing the prefix.
+  local -a file_exts=(
+    tar tar.gz tgz tar.xz txz tlz tar.lzma tar.bz2 tbz tbz2 tar.zst tzst tar.Z taz
+    7z zip rar
+    sha1 md5 sfv sig meta torrent nfo info
+  )
+  # Split-chunk suffix patterns (the [0-9] classes stay active below; only
+  # the stem is glob-escaped).
+  local -a split_globs=(
+    "7z.[0-9][0-9][0-9]" "zip.[0-9][0-9][0-9]" "rar.[0-9][0-9][0-9]"
+    "z[0-9][0-9]" "r[0-9][0-9]" "part[0-9]*.rar"
+  )
+
   declare -A seen=()
-  shopt -s nullglob dotglob
-  for candidate in "$base_no_sha".* "$dir/$stem"; do
+  local candidate ext g esc_dir esc_stem
+  esc_dir="$(glob_escape "$dir")"
+  esc_stem="$(glob_escape "$stem")"
+
+  for ext in "${file_exts[@]}"; do
+    candidate="$dir/$stem.$ext"
     [[ -f "$candidate" ]] || continue
     if [[ "$candidate" == "$manifest" || (-n "${archive:-}" && "$candidate" == "$archive") ]]; then
       continue
     fi
     seen["$candidate"]=1
   done
-  shopt -u nullglob dotglob
+
+  for g in "${split_globs[@]}"; do
+    while IFS= read -r candidate; do
+      [[ -f "$candidate" ]] || continue
+      if [[ "$candidate" == "$manifest" || (-n "${archive:-}" && "$candidate" == "$archive") ]]; then
+        continue
+      fi
+      seen["$candidate"]=1
+    done < <(compgen -G "$esc_dir/$esc_stem.$g")
+  done
 
   for candidate in "${!seen[@]}"; do
     __out_ref+=("$candidate")
@@ -84,9 +125,13 @@ gather_delete_targets() {
     __out_ref+=("$manifest")
   fi
 
+  # The archive is the manifest path minus the .sha256 suffix — under the
+  # current naming convention that is the exact archive filename, e.g.
+  # "a.tar.sha256" describes "a.tar". -f (not -e) so a directory or fifo
+  # that happens to share the name is never queued for rm -f.
   if [[ "$manifest" == *.sha256 ]]; then
     archive="${manifest%.sha256}"
-    if [[ -e "$archive" ]]; then
+    if [[ -f "$archive" ]]; then
       __out_ref+=("$archive")
     fi
   fi
@@ -159,7 +204,7 @@ interactive_select_items() {
     IFS=',' read -r -a selected_indices <<<"$input"
     declare -a selected_unique=()
     declare -A seen_index=()
-    invalid=0
+    local invalid=0
     for raw in "${selected_indices[@]}"; do
       if [[ ! "$raw" =~ ^[0-9]+$ ]]; then
         invalid=1
@@ -225,7 +270,7 @@ process_manifest() {
       sub(/\r$/, "", line)
       lineno++
       if (line == "" || line ~ /^[[:space:]]*#/ || line ~ /^%%/) next
-      if (match(line, /^[[:xdigit:]]{64}[ \t]+[*]?/)) {
+      if (match(line, /^[[:xdigit:]]{64}[ \t]+/)) {
         hash = substr(line, 1, 64)
         rest = substr(line, RLENGTH + 1)
         entry = rest
