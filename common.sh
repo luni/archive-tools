@@ -34,7 +34,7 @@ prepare_file_for_write() {
 }
 
 write_sha256_manifest() {
-	local root="$1" dest="$2" file rel hash size
+	local root="$1" dest="$2" exclude="${3:-}" file rel hash size
 	[[ -z "$dest" ]] && return 0
 
 	while IFS= read -r -d '' file; do
@@ -42,6 +42,7 @@ write_sha256_manifest() {
 		if [[ "$rel" == "$file" ]]; then
 			rel="$(basename -- "$file")"
 		fi
+		[[ -n "$exclude" && "$rel" == "$exclude" ]] && continue
 		hash="$(sha256sum -- "$file" | awk '{print $1}')"
 		size="$(stat -c '%s' -- "$file")"
 		printf '%s  %s  %s\n' "$hash" "$rel" "$size" >>"$dest"
@@ -54,7 +55,8 @@ is_split_archive() {
 	local lowered="${archive,,}"
 	[[ "$lowered" =~ \.(7z|zip|rar)\.[0-9]+$ ]] ||
 		[[ "$lowered" =~ \.part[0-9]+\.rar$ ]] ||
-		[[ "$lowered" =~ \.r[0-9]+$ ]]
+		[[ "$lowered" =~ \.r[0-9]+$ ]] ||
+		[[ "$lowered" =~ \.z[0-9]+$ ]]
 }
 
 is_first_chunk() {
@@ -104,10 +106,12 @@ detect_tar_compression() {
 	local archive="$1"
 	local lowered="${archive,,}"
 	case "$lowered" in
-	*.tar.gz | *.tgz | *.taz) echo "gz" ;;
+	*.tar.gz | *.tgz) echo "gz" ;;
 	*.tar.bz2 | *.tbz | *.tbz2) echo "bz2" ;;
-	*.tar.xz | *.txz | *.tlz) echo "xz" ;;
+	*.tar.xz | *.txz) echo "xz" ;;
 	*.tar.zst | *.tzst) echo "zst" ;;
+	*.tar.lzma | *.tlz) echo "lzma" ;;
+	*.tar.z | *.taz) echo "Z" ;;
 	*) echo "none" ;;
 	esac
 }
@@ -132,6 +136,12 @@ get_decompression_command() {
 		;;
 	xz)
 		echo "pixz -d"
+		;;
+	lzma)
+		echo "xz -dc"
+		;;
+	Z)
+		echo "gzip -dc"
 		;;
 	zst)
 		echo "pzstd -d -q -c"
@@ -158,13 +168,13 @@ get_compressor_command() {
 		echo "pixz $XZ_LEVEL"
 		;;
 	xz_big)
-		echo "xz $XZ_LEVEL -c"
+		echo "xz $XZ_LEVEL -T0 -c"
 		;;
 	pzstd)
 		echo "pzstd $PZSTD_LEVEL"
 		;;
 	zstd_big)
-		echo "zstd $ZSTD_LEVEL -q -c"
+		echo "zstd $ZSTD_LEVEL -T0 -q -c"
 		;;
 	*)
 		echo "unknown"
@@ -197,7 +207,8 @@ basename_without_extension() {
 }
 
 confirm_action() {
-	local prompt="$1" auto_confirm="$2" shift 2
+	local prompt="$1" auto_confirm="$2"
+	shift 2
 	local -a items=("$@")
 
 	if ((auto_confirm)); then
@@ -245,6 +256,12 @@ detect_actual_format() {
 		;;
 	*zstd* | *application/zstd*)
 		echo "zst"
+		;;
+	*lzma* | *application/x-lzma*)
+		echo "lzma"
+		;;
+	*lz4* | *application/x-lz4*)
+		echo "lz4"
 		;;
 	*"POSIX tar archive"* | *"tar archive"* | *application/x-tar*)
 		echo "tar"
@@ -405,7 +422,7 @@ default_basename_path() {
 
 default_sha256_path() {
 	local archive="$1"
-	printf '%s.sha256\n' "$(default_basename_path "$archive")"
+	printf '%s.sha256\n' "$archive"
 }
 
 # Compression level defaults
@@ -494,6 +511,14 @@ tar_decompress_stream() {
 		# "-c" is ignored and "-d in.xz" alone would overwrite/remove inputs.
 		pixz -dk -- "$archive" /dev/stdout
 		;;
+	lzma)
+		# .tlz / .tar.lzma: lzma-alone format; xz decodes it, pixz cannot.
+		xz -dc -- "$archive"
+		;;
+	Z)
+		# .taz / .tar.Z: LZW "compress" format; gzip decodes it, pigz cannot.
+		gzip -dc -- "$archive"
+		;;
 	zst)
 		pzstd -d -q -c -- "$archive"
 		;;
@@ -504,6 +529,37 @@ tar_decompress_stream() {
 		die "Unknown tar compression: $compression"
 		;;
 	esac
+}
+
+# Resolve the compression format of a tar stream: start from the file-name
+# mapping, then cross-check the actual content with file(1). Misnamed inputs
+# (e.g. a gzip stream named "*.tar") are corrected instead of being piped
+# through the wrong decompressor — or, for "none", wrapped raw into the output.
+resolve_tar_compression() {
+	local archive="$1" named actual mapped
+	named="$(detect_tar_compression "$archive")"
+	command -v file >/dev/null 2>&1 || {
+		printf '%s\n' "$named"
+		return 0
+	}
+	actual="$(detect_actual_format "$archive")"
+	case "$actual" in
+	tar) mapped="none" ;;
+	gz | bz2 | xz | zst | lzma | Z) mapped="$actual" ;;
+	zip | rar | 7z | lz4)
+		die "Archive '$archive' contains '$actual' data, not a tar stream"
+		;;
+	*) mapped="" ;;
+	esac
+	if [[ -z "$mapped" && "$named" == "none" && "${2:-0}" == "1" ]]; then
+		die "Archive '$archive' has unrecognized content; refusing to treat it as a tar stream"
+	fi
+	if [[ -n "$mapped" && "$mapped" != "$named" ]]; then
+		log "magic: $archive content detected as '$actual'; overriding extension-derived '$named'"
+		printf '%s\n' "$mapped"
+	else
+		printf '%s\n' "$named"
+	fi
 }
 
 # List all member names of a tar archive (one per line) into $2.
@@ -528,21 +584,22 @@ write_tar_checksum_command() {
 #!/usr/bin/env bash
 set -euo pipefail
 f="${TAR_FILENAME:-}"
-if [[ -z "$f" || "$f" == */ ]]; then
+# TAR_FILETYPE is exported by GNU tar's --to-command: 'f' = regular file.
+# Symlinks/hardlinks/directories carry no member data; drain stdin anyway.
+if [[ -n "${TAR_FILETYPE:-}" && "${TAR_FILETYPE:-}" != "f" ]]; then
+	cat >/dev/null 2>&1 || true
 	exit 0
 fi
+if [[ -z "$f" || "$f" == */ ]]; then
+	cat >/dev/null 2>&1 || true
+	exit 0
+fi
+f="${f#./}"
 if [[ -n "${TAR_CMD_VERBOSE:-}" ]]; then
 	printf 'processing: %s\n' "$f" >&2
 fi
-tmp_size="$(mktemp)"
-if ! hash="$(tee >(wc -c | awk '{print $1}' >"$tmp_size") | sha256sum | awk '{print $1}')"; then
-	rm -f "$tmp_size"
-	exit 1
-fi
-if ! read -r size <"$tmp_size"; then
-	size=0
-fi
-rm -f "$tmp_size"
+hash="$(sha256sum | awk '{print $1}')"
+size="${TAR_SIZE:-0}"
 if [[ -n "${TMP_MANIFEST:-}" ]]; then
 	printf '%s\t%s\t%s\n' "$hash" "$f" "$size" >>"$TMP_MANIFEST"
 fi
@@ -553,35 +610,29 @@ EOF
 
 # Hash every regular file inside a tar archive in a single decompression pass.
 # Appends sorted "hash  path  size" lines to $3. Progress lines stay on stdout.
+# Non-regular members (dirs, links) are skipped by the --to-command helper.
 write_tar_manifest() {
 	local archive="$1" compression="${2:-none}" dest="$3"
 	[[ -z "$dest" ]] && return 0
 
-	local tmp_entries tmp_files tmp_command tmp_manifest
-	tmp_entries="$(mktemp)"
-	tmp_files="$(mktemp)"
+	local tmp_command tmp_manifest tmp_extract
 	tmp_command="$(mktemp)"
 	tmp_manifest="$(mktemp)"
-
-	tar_list_entries "$archive" "$tmp_entries" "$compression"
-	local entry
-	while IFS= read -r entry; do
-		[[ -z "$entry" ]] && continue
-		[[ "$entry" == */ ]] && continue
-		printf '%s\0' "$entry"
-	done <"$tmp_entries" >"$tmp_files"
-	rm -f "$tmp_entries"
+	tmp_extract="$(mktemp -d)"
 
 	write_tar_checksum_command "$tmp_command"
 
+	# -C tmp_extract keeps directory/link members (which --to-command does
+	# not consume) off the caller's working directory.
 	local rc=0
 	TMP_MANIFEST="$tmp_manifest" \
-		tar --null --files-from="$tmp_files" --to-command="$tmp_command" -xf - \
+		tar -C "$tmp_extract" --to-command="$tmp_command" -xf - \
 		< <(tar_decompress_stream "$archive" "$compression") || rc=$?
 
 	LC_ALL=C sort -t $'\t' -k2,2 "$tmp_manifest" |
 		awk -F $'\t' '{printf "%s  %s  %s\n", $1, $2, $3}' >>"$dest"
 
-	rm -f "$tmp_files" "$tmp_command" "$tmp_manifest"
+	rm -f "$tmp_command" "$tmp_manifest"
+	rm -rf -- "$tmp_extract"
 	return "$rc"
 }
