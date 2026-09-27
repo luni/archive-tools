@@ -8,6 +8,7 @@ source "${SCRIPT_DIR}/common.sh"
 tmp_manifest=""
 tmp_tar_entries=""
 tmp_entries_list=""
+tmp_output=""
 
 cleanup() {
   if [[ -n "$tmp_manifest" && -f "$tmp_manifest" ]]; then
@@ -18,6 +19,9 @@ cleanup() {
   fi
   if [[ -n "$tmp_entries_list" && -f "$tmp_entries_list" ]]; then
     rm -f "$tmp_entries_list"
+  fi
+  if [[ -n "$tmp_output" && -f "$tmp_output" ]]; then
+    rm -f "$tmp_output"
   fi
 }
 
@@ -231,11 +235,16 @@ setup_archive_tools() {
       ;;
     tar|tar.gz|tar.xz|tar.bz2|tar.zst)
       require_cmd tar
-      TAR_COMPRESSION="$(detect_tar_compression "$ARCHIVE")"
+      require_cmd file
+      # Sniff the payload too: a misnamed archive (e.g. gzip bytes named
+      # *.tar) is corrected to its real decompressor.
+      TAR_COMPRESSION="$(resolve_tar_compression "$ARCHIVE")"
       case "$TAR_COMPRESSION" in
         gz) require_cmd pigz ;;
         bz2) require_cmd pbzip2 ;;
         xz) require_cmd pixz ;;
+        lzma) require_cmd xz ;;
+        Z) require_cmd gzip ;;
         zst) require_cmd pzstd ;;
         none) ;;
         *) die "Unsupported tar compression '$TAR_COMPRESSION'" ;;
@@ -333,6 +342,7 @@ fi
 
 mkdir -p -- "$(dirname -- "$OUTPUT_FILE")"
 tmp_manifest="$(mktemp)"
+tmp_output="$(mktemp)"
 trap cleanup EXIT
 
 log "Writing SHA-256 manifest to $OUTPUT_FILE"
@@ -350,11 +360,19 @@ if [[ "$ARCHIVE_TYPE" == "tar" || "$ARCHIVE_TYPE" == tar.* ]]; then
   done <"$tmp_tar_entries"
 
   if [[ "$files_processed" -gt 0 ]]; then
-    log "Processing $files_processed file(s) in a single pass"
+    log "Processing $files_processed archive entries in a single pass"
     export TAR_CMD_VERBOSE=1
-    : >"$OUTPUT_FILE"
-    if ! write_tar_manifest "$ARCHIVE" "$TAR_COMPRESSION" "$OUTPUT_FILE"; then
+    # Stage the manifest in a temp file and publish it atomically: a failure
+    # mid-pass must not leave a truncated manifest that later runs would skip.
+    if ! write_tar_manifest "$ARCHIVE" "$TAR_COMPRESSION" "$tmp_output"; then
       die "Failed to process tar entries"
+    fi
+    # Report the number of regular files actually hashed; the pre-listing
+    # count above can include links/dirs that carry no member data.
+    files_processed="$(wc -l <"$tmp_output")"
+    if [[ "$files_processed" -gt 0 ]]; then
+      mv -- "$tmp_output" "$OUTPUT_FILE"
+      tmp_output=""
     fi
   fi
 else
@@ -378,11 +396,13 @@ else
       die "Failed to determine entry size for '$entry' in $ARCHIVE"
     fi
     tmp_size="$(mktemp)"
-    if ! hash="$(head -c "$entry_size" <&"$DATA_FD" | tee >(wc -c | awk '{print $1}' >"$tmp_size") | sha256sum | awk '{print $1}')"; then
+    # tee writes the size reference synchronously — no process substitution,
+    # so the byte count is complete when the pipeline returns.
+    if ! hash="$(head -c "$entry_size" <&"$DATA_FD" | tee -- "$tmp_size" | sha256sum | awk '{print $1}')"; then
       rm -f "$tmp_size"
       die "Failed to compute SHA-256 for $entry"
     fi
-    actual_size="$(cat "$tmp_size")"
+    actual_size="$(stat -c '%s' -- "$tmp_size")"
     rm -f "$tmp_size"
     if [[ "$actual_size" != "$entry_size" ]]; then
       die "Failed to compute SHA-256 for $entry (expected $entry_size bytes, read $actual_size)"
@@ -406,7 +426,9 @@ else
   fi
 
   if [[ "$files_processed" -gt 0 ]]; then
-    LC_ALL=C sort -t $'\t' -k2,2 "$tmp_manifest" | awk -F $'\t' '{printf "%s  %s  %s\n", $1, $2, $3}' >"$OUTPUT_FILE"
+    LC_ALL=C sort -t $'\t' -k2,2 "$tmp_manifest" | awk -F $'\t' '{printf "%s  %s  %s\n", $1, $2, $3}' >"$tmp_output"
+    mv -- "$tmp_output" "$OUTPUT_FILE"
+    tmp_output=""
   fi
 fi
 

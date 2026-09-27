@@ -158,7 +158,7 @@ _run_analyze_archive_case() {
     return 1
   fi
 
-  local manifest="$tmpdir/sample.sha256"
+  local manifest="$archive.sha256"
   if [[ ! -f "$manifest" ]]; then
     echo "Manifest not created at expected path (${archive_type}): $manifest" >&2
     return 1
@@ -252,14 +252,14 @@ _run_analyze_archive_case() {
       return 1
     fi
 
-    local nonfirst_manifest="${split_second_chunk%.*}.sha256"
+    local nonfirst_manifest="${split_second_chunk}.sha256"
     if [[ -e "$nonfirst_manifest" ]]; then
       echo "Manifest should not be created for non-first split chunk (${archive_type})" >&2
       return 1
     fi
   fi
 
-  local manifest_backup="$tmpdir/sample.sha256.expected"
+  local manifest_backup="$manifest.expected"
   cp -- "$manifest" "$manifest_backup"
 
   printf 'out-of-date manifest\n' >"$manifest"
@@ -330,7 +330,7 @@ _run_analyze_archive_invalid_cases() {
     if [[ "$archive_type" == "rar" ]]; then
       printf '\x00\x00\x00\x00\x00\x00\x00\x00' >>"$invalid"
     fi
-    local manifest="${invalid%.*}.sha256"
+    local manifest="${invalid}.sha256"
     local output_file="$tmpdir/output-${archive_type}.log"
 
     if "$REPO_ROOT/analyze-archive.sh" "$invalid" >"$output_file" 2>&1; then
@@ -362,7 +362,7 @@ _run_analyze_archive_password_protected() {
   local tmpdir="$1"
   local input_dir="$tmpdir/input"
   local archive="$tmpdir/password_protected.7z"
-  local manifest="${archive%.*}.sha256"
+  local manifest="${archive}.sha256"
   local output_file="$tmpdir/output.log"
 
   mkdir -p "$input_dir"
@@ -429,7 +429,7 @@ _run_analyze_archive_password_protected_zip() {
   local tmpdir="$1"
   local input_dir="$tmpdir/input"
   local archive="$tmpdir/password_protected.zip"
-  local manifest="${archive%.*}.sha256"
+  local manifest="${archive}.sha256"
   local output_file="$tmpdir/output.log"
 
   mkdir -p "$input_dir"
