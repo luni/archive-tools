@@ -34,6 +34,10 @@ while [[ $# -gt 0 ]]; do
     usage
     exit 0
     ;;
+  --)
+    shift
+    break
+    ;;
   -*)
     die "Unknown option: $1"
     ;;
@@ -50,6 +54,17 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Positional args may also follow a literal "--".
+for arg in "$@"; do
+  if [[ -z "$DIRECTORY" ]]; then
+    DIRECTORY="$arg"
+  elif [[ -z "$OUTPUT_FILE" ]]; then
+    OUTPUT_FILE="$arg"
+  else
+    die "Too many arguments"
+  fi
+done
+
 [[ -n "$DIRECTORY" ]] || die "Directory path is required."
 validate_dir_exists "$DIRECTORY"
 
@@ -57,22 +72,37 @@ if [[ -z "$OUTPUT_FILE" ]]; then
   OUTPUT_FILE="$(default_sha256_path "$DIRECTORY")"
 fi
 
-prepare_file_for_write "$OUTPUT_FILE"
+mkdir -p -- "$(dirname -- "$OUTPUT_FILE")"
 
-# The output file is created (truncated) above; if it lives inside the
-# scanned directory it must not appear in its own manifest.
+# Stage the manifest in a temp file in the target directory and publish it
+# with mv only after a fully successful scan, so a mid-run failure cannot
+# leave a truncated manifest that later dedupe passes would trust.
+tmp_manifest="$(mktemp -p "$(dirname -- "$OUTPUT_FILE")" ".$(basename -- "$OUTPUT_FILE").tmp.XXXXXX")"
+trap '[[ -n "$tmp_manifest" ]] && rm -f -- "$tmp_manifest"' EXIT
+
+# Both the output path (a pre-existing manifest inside the scan root) and the
+# staging file itself must be excluded from the scan.
 out_rel=""
+tmp_rel=""
 if command -v realpath >/dev/null 2>&1; then
   abs_dir="$(realpath -m -- "$DIRECTORY")"
-  rel="$(realpath -m --relative-to="$abs_dir" -- "$OUTPUT_FILE")"
-  if [[ "$rel" != ".."* && "$rel" != /* && "$rel" != "." ]]; then
-    out_rel="$rel"
-  fi
+  for p in "$OUTPUT_FILE" "$tmp_manifest"; do
+    rel="$(realpath -m --relative-to="$abs_dir" -- "$p")"
+    [[ "$rel" == ".." || "$rel" == ../* || "$rel" == /* || "$rel" == "." ]] && continue
+    if [[ "$p" == "$OUTPUT_FILE" ]]; then
+      out_rel="$rel"
+    else
+      tmp_rel="$rel"
+    fi
+  done
 fi
 
 if command -v hashdeep >/dev/null 2>&1; then
   log "Using hashdeep for faster hashing"
-  hashdeep -l -c sha256 -r "$DIRECTORY" | awk -v dir="$DIRECTORY" -v excl="$out_rel" '
+  # hashdeep exits 0 even when parts of the tree are unreadable; its stderr is
+  # empty on a clean run, so any output there means the manifest is incomplete.
+  hd_err="$(mktemp)"
+  hashdeep -l -c sha256 -r "$DIRECTORY" 2>"$hd_err" | awk -v dir="$DIRECTORY" -v excl="$out_rel" -v excl2="$tmp_rel" '
     /^#/ || /^%/ || /^sha256[[:space:]]+filename$/ || /^$/ { next }
     {
       # CSV row: size,hash,filename — the filename may be quoted and may
@@ -97,13 +127,23 @@ if command -v hashdeep >/dev/null 2>&1; then
       }
       # Remove leading ./ if present
       gsub(/^\.\//, "", path)
-      if (excl != "" && path == excl) next
+      if ((excl != "" && path == excl) || (excl2 != "" && path == excl2)) next
       print hash "  " path "  " size
     }
-  ' >"$OUTPUT_FILE"
+  ' >"$tmp_manifest"
+  if [[ -s "$hd_err" ]]; then
+    cat "$hd_err" >&2
+    rm -f "$hd_err"
+    die "hashdeep reported scan errors; refusing to publish an incomplete manifest"
+  fi
+  rm -f "$hd_err"
 else
   log "Using find+sha256sum (hashdeep not available)"
-  write_sha256_manifest "$DIRECTORY" "$OUTPUT_FILE" "$out_rel"
+  write_sha256_manifest "$DIRECTORY" "$tmp_manifest" "$out_rel" "$tmp_rel"
 fi
+
+chmod_like_new_file "$tmp_manifest"
+mv -f -- "$tmp_manifest" "$OUTPUT_FILE"
+tmp_manifest=""
 
 log "SHA-256 manifest written to: $OUTPUT_FILE"

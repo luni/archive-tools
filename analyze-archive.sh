@@ -9,10 +9,14 @@ tmp_manifest=""
 tmp_tar_entries=""
 tmp_entries_list=""
 tmp_output=""
+tmp_size=""
 
 cleanup() {
   if [[ -n "$tmp_manifest" && -f "$tmp_manifest" ]]; then
     rm -f "$tmp_manifest"
+  fi
+  if [[ -n "$tmp_size" && -f "$tmp_size" ]]; then
+    rm -f "$tmp_size"
   fi
   if [[ -n "$tmp_tar_entries" && -f "$tmp_tar_entries" ]]; then
     rm -f "$tmp_tar_entries"
@@ -310,6 +314,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Positional args may also follow a literal "--".
+for arg in "$@"; do
+  if [[ -z "$ARCHIVE" ]]; then
+    ARCHIVE="$arg"
+  else
+    die "Only one archive can be processed at a time."
+  fi
+done
+
 if [[ -z "$ARCHIVE" ]]; then
   die "Archive path is required."
 fi
@@ -371,6 +384,7 @@ if [[ "$ARCHIVE_TYPE" == "tar" || "$ARCHIVE_TYPE" == tar.* ]]; then
     # count above can include links/dirs that carry no member data.
     files_processed="$(wc -l <"$tmp_output")"
     if [[ "$files_processed" -gt 0 ]]; then
+      chmod_like_new_file "$tmp_output"
       mv -- "$tmp_output" "$OUTPUT_FILE"
       tmp_output=""
     fi
@@ -427,6 +441,7 @@ else
 
   if [[ "$files_processed" -gt 0 ]]; then
     LC_ALL=C sort -t $'\t' -k2,2 "$tmp_manifest" | awk -F $'\t' '{printf "%s  %s  %s\n", $1, $2, $3}' >"$tmp_output"
+    chmod_like_new_file "$tmp_output"
     mv -- "$tmp_output" "$OUTPUT_FILE"
     tmp_output=""
   fi

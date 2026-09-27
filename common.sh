@@ -22,6 +22,12 @@ log() {
 	printf '%s\n' "$*" >&2
 }
 
+# Files staged via mktemp are mode 0600; give them the permissions a
+# normally-created file would have under the current umask (0666 & ~umask).
+chmod_like_new_file() {
+	chmod -- "$(printf '%03o' $((0666 & ~8#$(umask))))" "$1"
+}
+
 prepare_file_for_write() {
 	local file="$1" append_flag="${2:-0}"
 	[[ -z "$file" ]] && return 0
@@ -39,11 +45,24 @@ write_sha256_manifest() {
 	local -a excludes=("$@")
 	[[ -z "$dest" ]] && return 0
 	root="${root%"${root##*[!/]}"}" # strip trailing slashes
+	[[ -z "$root" ]] && root="/"
+
+	# Buffer the listing first: a find that fails mid-scan (e.g. unreadable
+	# subdirectory) would otherwise produce a silently incomplete manifest.
+	local tmp_list
+	tmp_list="$(mktemp)"
+	if ! LC_ALL=C find "$root" -type f -print0 | LC_ALL=C sort -z >"$tmp_list"; then
+		rm -f "$tmp_list"
+		printf 'Error: failed to enumerate files under %s\n' "$root" >&2
+		return 1
+	fi
 
 	while IFS= read -r -d '' file; do
 		# Literal prefix strip: ${file#$root/} would treat glob characters in
 		# the root as patterns; a positional substring does not.
-		if [[ "${file:0:${#root}+1}" == "$root/" ]]; then
+		if [[ "$root" == "/" ]]; then
+			rel="${file#/}"
+		elif [[ "${file:0:${#root}+1}" == "$root/" ]]; then
 			rel="${file:${#root}+1}"
 		else
 			rel="$(basename -- "$file")"
@@ -54,7 +73,8 @@ write_sha256_manifest() {
 		hash="$(sha256sum -- "$file" | awk '{print $1}')"
 		size="$(stat -c '%s' -- "$file")"
 		printf '%s  %s  %s\n' "$hash" "$rel" "$size" >>"$dest"
-	done < <(LC_ALL=C find "$root" -type f -print0 | LC_ALL=C sort -z)
+	done <"$tmp_list"
+	rm -f "$tmp_list"
 }
 
 # Archive type detection
@@ -355,7 +375,7 @@ strip_archive_suffixes() {
 	while :; do
 		lowered="${name,,}"
 		case "$lowered" in
-		*.tar.gz | *.tar.bz2 | *.tar.xz | *.tar.zst)
+		*.tar.gz | *.tar.bz2 | *.tar.xz | *.tar.zst | *.tar.lzma | *.tar.z)
 			name="${name%.*}"
 			name="${name%.*}"
 			;;

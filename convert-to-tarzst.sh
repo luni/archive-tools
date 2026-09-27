@@ -190,9 +190,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ $# -gt 0 ]]; then
-  die "Unexpected positional arguments: $*"
-fi
+# Positional args may also follow a literal "--".
+for arg in "$@"; do
+  if [[ -z "$ARCHIVE" ]]; then
+    ARCHIVE="$arg"
+  else
+    die "Only one archive can be converted at a time."
+  fi
+done
 
 [[ -n "$ARCHIVE" ]] || die "Archive path is required."
 [[ -f "$ARCHIVE" ]] || die "Archive not found: $ARCHIVE"

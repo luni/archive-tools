@@ -108,9 +108,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ $# -gt 0 ]]; then
-  die "Unexpected positional arguments: $*"
-fi
+# Positional args may also follow a literal "--".
+for arg in "$@"; do
+  if [[ -z "$SOURCE_DIR" ]]; then
+    SOURCE_DIR="$arg"
+  else
+    die "Only one directory can be compressed at a time."
+  fi
+done
 
 [[ -n "$SOURCE_DIR" ]] || die "Directory path is required."
 [[ -d "$SOURCE_DIR" ]] || die "Directory not found: $SOURCE_DIR"
@@ -155,7 +160,7 @@ abs_src="$(realpath -m -- "$SOURCE_DIR")"
 for p in "$OUTPUT" "$TMP_OUTPUT" "$SHA256_FILE"; do
   [[ -z "$p" ]] && continue
   rel="$(realpath -m --relative-to="$abs_src" -- "$p")"
-  [[ "$rel" == ".."* || "$rel" == /* || "$rel" == "." ]] && continue
+  [[ "$rel" == ".." || "$rel" == ../* || "$rel" == /* || "$rel" == "." ]] && continue
   [[ -n "$SHA256_FILE" && "$p" == "$SHA256_FILE" ]] && sha_rel="$rel"
   [[ "$p" == "$OUTPUT" ]] && out_rel="$rel"
   esc="${rel//\\/\\\\}"
