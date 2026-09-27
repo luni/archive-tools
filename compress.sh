@@ -171,30 +171,37 @@ while [[ $# -gt 0 ]]; do
     shift
     ;;
   --small)
+    [[ $# -lt 2 ]] && die "Missing value for $1"
     SMALL_COMPRESSOR="$2"
     shift 2
     ;;
   --big)
+    [[ $# -lt 2 ]] && die "Missing value for $1"
     BIG_COMPRESSOR="$2"
     shift 2
     ;;
   --big-jobs)
+    [[ $# -lt 2 ]] && die "Missing value for $1"
     BIG_JOBS="$2"
     shift 2
     ;;
   --xz-level)
+    [[ $# -lt 2 ]] && die "Missing value for $1"
     XZ_LEVEL="$2"
     shift 2
     ;;
   --zstd-level)
+    [[ $# -lt 2 ]] && die "Missing value for $1"
     ZSTD_LEVEL="$2"
     shift 2
     ;;
   --pzstd-level)
+    [[ $# -lt 2 ]] && die "Missing value for $1"
     PZSTD_LEVEL="$2"
     shift 2
     ;;
   --ext)
+    [[ $# -lt 2 ]] && die "Missing value for $1"
     if [[ "$EXTENSIONS_CUSTOMIZED" -eq 0 ]]; then
       EXTENSIONS=()
       EXTENSIONS_CUSTOMIZED=1
@@ -231,6 +238,11 @@ while [[ $# -gt 0 ]]; do
     ;;
   esac
 done
+
+[[ $# -eq 0 ]] || die "Unexpected positional arguments: $*"
+[[ -d "$SCAN_DIR" ]] || die "Scan directory not found: $SCAN_DIR"
+[[ "$SMALL_JOBS" =~ ^[0-9]+$ && "$SMALL_JOBS" -ge 1 ]] || die "--jobs must be a positive integer (got: $SMALL_JOBS)"
+[[ "$BIG_JOBS" =~ ^[0-9]+$ && "$BIG_JOBS" -ge 1 ]] || die "--big-jobs must be a positive integer (got: $BIG_JOBS)"
 
 # Validate required tools before doing any work
 require_cmd parallel
@@ -283,6 +295,10 @@ out_name() {
 }
 
 compress_small() {
+  # Job shells spawned by parallel run `bash -c` WITHOUT errexit/pipefail:
+  # re-enable them here so a failed reader/compressor aborts the pipeline and
+  # a failed mv does not fall through to deleting the source file.
+  set -euo pipefail
   local f="$1" out tmp sha1_line="" sha256_line="" size=""
   if skip_if_already_compressed "$f"; then
     return 0
@@ -370,6 +386,7 @@ compress_small() {
 }
 
 compress_big_seq() {
+  set -euo pipefail
   local f="$1" out tmp sha1_line="" sha256_line="" size=""
   if skip_if_already_compressed "$f"; then
     return 0
@@ -494,6 +511,7 @@ fi
 find "$SCAN_DIR" -type f \( "${ext_pred[@]}" \) \
   ! -iname '*.zst' ! -iname '*.tzst' ! -iname '*.xz' ! -iname '*.txz' \
   ! -iname '*.gz' ! -iname '*.tgz' ! -iname '*.bz2' ! -iname '*.tbz' ! -iname '*.tbz2' -print0 |
+  LC_ALL=C sort -z |
   while IFS= read -r -d '' f; do
     # Never process the checksum outputs themselves (-ef also covers
     # path variants like ./x vs x and hardlinks to the same file).

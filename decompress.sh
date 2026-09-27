@@ -75,16 +75,30 @@ add_compressors() {
 while [[ $# -gt 0 ]]; do
   case "$1" in
   -d | --dir)
+    [[ $# -lt 2 ]] && die "Missing value for $1"
     SCAN_DIR="$2"
     shift 2
     ;;
+  -d?*)
+    SCAN_DIR="${1:2}"
+    shift
+    ;;
   -c | --compressor)
+    [[ $# -lt 2 ]] && die "Missing value for $1"
     if [[ "$CUSTOM_COMPRESSORS" -eq 0 ]]; then
       SUPPORTED_COMPRESSORS=()
       CUSTOM_COMPRESSORS=1
     fi
     add_compressors "$2"
     shift 2
+    ;;
+  -c?*)
+    if [[ "$CUSTOM_COMPRESSORS" -eq 0 ]]; then
+      SUPPORTED_COMPRESSORS=()
+      CUSTOM_COMPRESSORS=1
+    fi
+    add_compressors "${1:2}"
+    shift
     ;;
   -j | --jobs)
     [[ $# -lt 2 ]] && die "Missing value for $1"
@@ -118,6 +132,8 @@ while [[ $# -gt 0 ]]; do
   *) die "Unknown option: $1" ;;
   esac
 done
+
+[[ $# -eq 0 ]] || die "Unexpected positional arguments: $*"
 
 if [[ "${#SUPPORTED_COMPRESSORS[@]}" -eq 0 ]]; then
   die "At least one decompressor must be enabled (pixz, pzstd, pigz, or pbzip2)."
@@ -180,6 +196,9 @@ if [[ "${#magic_predicate[@]}" -gt 0 ]]; then
 fi
 
 decompress_file() {
+  # Job shells spawned by parallel run `bash -c` WITHOUT errexit: re-enable it
+  # so a failed mv does not fall through to deleting the compressed source.
+  set -euo pipefail
   local f="$1" compressor out tmp
 
   # First check if file is misnamed and rename if needed
