@@ -6,8 +6,6 @@ from torrent_compress_recovery.gzip import (
     _get_flag_names,
     _safe_decode_bytes,
     parse_gzip_header,
-    sha1_piece,
-    sha256_piece,
 )
 
 
@@ -41,34 +39,6 @@ def test_get_flag_names():
 
     flag_names = _get_flag_names(0x10)  # FCOMMENT
     assert "FCOMMENT" in flag_names
-
-
-def test_sha1_piece():
-    """Test SHA-1 piece hashing."""
-    data = b"test data for sha1"
-    hash_result = sha1_piece(data)
-
-    # Verify it's a 20-byte SHA-1 hash
-    assert isinstance(hash_result, bytes)
-    assert len(hash_result) == 20
-
-    # Verify consistency
-    hash_result2 = sha1_piece(data)
-    assert hash_result == hash_result2
-
-
-def test_sha256_piece():
-    """Test SHA-256 piece hashing."""
-    data = b"test data for sha256"
-    hash_result = sha256_piece(data)
-
-    # Verify it's a 32-byte SHA-256 hash
-    assert isinstance(hash_result, bytes)
-    assert len(hash_result) == 32
-
-    # Verify consistency
-    hash_result2 = sha256_piece(data)
-    assert hash_result == hash_result2
 
 
 def test_parse_gzip_header_invalid_file(tmp_path: Path):

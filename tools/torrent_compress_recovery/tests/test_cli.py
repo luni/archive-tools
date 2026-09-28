@@ -80,6 +80,9 @@ def test_main_recover_mode(tmp_path: Path):
         mock_result = Mock()
         mock_result.recovered = 1
         mock_result.gzipped = 2
+        mock_result.bzipped = 0
+        mock_result.xzipped = 0
+        mock_result.zstipped = 0
         mock_result.skipped = 0
         mock_result.missing = 0
         mock_recover.return_value = mock_result
@@ -96,6 +99,7 @@ def test_main_recover_mode(tmp_path: Path):
             overwrite=False,
             dry_run=False,
             filename_filter=None,
+            brute_force=True,
         )
 
 
@@ -110,6 +114,9 @@ def test_main_recover_mode_with_missing_files(tmp_path: Path):
         mock_result = Mock()
         mock_result.recovered = 1
         mock_result.gzipped = 1
+        mock_result.bzipped = 0
+        mock_result.xzipped = 0
+        mock_result.zstipped = 0
         mock_result.skipped = 0
         mock_result.missing = 2  # Some files missing
         mock_recover.return_value = mock_result
@@ -130,6 +137,9 @@ def test_main_with_all_flags(tmp_path: Path):
         mock_result = Mock()
         mock_result.recovered = 1
         mock_result.gzipped = 1
+        mock_result.bzipped = 0
+        mock_result.xzipped = 0
+        mock_result.zstipped = 0
         mock_result.skipped = 0
         mock_result.missing = 0
         mock_recover.return_value = mock_result
@@ -160,13 +170,14 @@ def test_main_with_all_flags(tmp_path: Path):
             overwrite=True,
             dry_run=True,
             filename_filter=None,
+            brute_force=True,
         )
 
 
 def test_main_logging_configuration():
     """Test that logging is properly configured."""
     with patch("torrent_compress_recovery.cli.recover") as mock_recover:
-        mock_recover.return_value = Mock(recovered=0, gzipped=0, skipped=0, missing=0)
+        mock_recover.return_value = Mock(recovered=0, gzipped=0, bzipped=0, xzipped=0, zstipped=0, skipped=0, missing=0)
 
         # Capture logging configuration
         with patch("logging.basicConfig") as mock_config:
@@ -180,7 +191,7 @@ def test_main_logging_configuration():
 def test_main_argument_parsing():
     """Test that arguments are properly parsed."""
     with patch("torrent_compress_recovery.cli.recover") as mock_recover:
-        mock_recover.return_value = Mock(recovered=0, gzipped=0, skipped=0, missing=0)
+        mock_recover.return_value = Mock(recovered=0, gzipped=0, bzipped=0, xzipped=0, zstipped=0, skipped=0, missing=0)
 
         result = main(
             [
@@ -198,8 +209,9 @@ def test_main_argument_parsing():
             ]
         )
 
+        assert result == 0
         # Verify the function was called with correct Path objects
-        args, kwargs = mock_recover.call_args
+        kwargs = mock_recover.call_args.kwargs
         assert isinstance(kwargs["torrent_path"], Path)
         assert isinstance(kwargs["raw_dir"], Path)
         assert isinstance(kwargs["partial_dir"], Path)
@@ -257,6 +269,9 @@ def test_main_inplace_recovery(tmp_path: Path):
         mock_result = Mock()
         mock_result.recovered = 1
         mock_result.gzipped = 0
+        mock_result.bzipped = 0
+        mock_result.xzipped = 0
+        mock_result.zstipped = 0
         mock_result.skipped = 0
         mock_result.missing = 0
         mock_recover.return_value = mock_result
@@ -273,6 +288,7 @@ def test_main_inplace_recovery(tmp_path: Path):
             overwrite=False,
             dry_run=False,
             filename_filter=None,
+            brute_force=True,
         )
 
 
@@ -286,6 +302,9 @@ def test_main_filename_filter_recovery(tmp_path: Path):
         mock_result = Mock()
         mock_result.recovered = 1
         mock_result.gzipped = 0
+        mock_result.bzipped = 0
+        mock_result.xzipped = 0
+        mock_result.zstipped = 0
         mock_result.skipped = 0
         mock_result.missing = 0
         mock_recover.return_value = mock_result
@@ -313,4 +332,5 @@ def test_main_filename_filter_recovery(tmp_path: Path):
             overwrite=False,
             dry_run=False,
             filename_filter="specific_file.gz",
+            brute_force=True,
         )

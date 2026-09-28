@@ -1,21 +1,35 @@
 """Core recovery logic: match torrent files against input folders."""
 
 import hashlib
+import logging
 import os
+import re
 import shutil
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from .bencode import parse_torrent
-from .bz2 import find_matching_candidate as find_bzip2_candidate
-from .bz2 import generate_bzip2_candidates, parse_bzip2_header, sha1_piece
-from .gzip import find_matching_candidate as find_gzip_candidate
-from .gzip import generate_gzip_candidates, parse_gzip_header
-from .xz import find_matching_candidate as find_xz_candidate
-from .xz import generate_xz_candidates, parse_xz_header
-from .zst import find_matching_candidate as find_zstd_candidate
-from .zst import generate_zstd_candidates, parse_zstd_header
+from .bencode import TorrentFile, TorrentMeta, parse_torrent
+from .bz2 import Bzip2Header, generate_bzip2_candidates, parse_bzip2_header
+from .gzip import GzipHeader, generate_gzip_candidates, parse_gzip_header
+from .xz import XzHeader, generate_xz_candidates, parse_xz_header
+from .zst import ZstdHeader, generate_zstd_candidates, parse_zstd_header
+
+Header = GzipHeader | Bzip2Header | XzHeader | ZstdHeader
+
+# Dispatch tables keyed by compressed-file extension.
+_GENERATORS: dict[str, Callable[..., list[tuple[str, bytes]]]] = {
+    ".gz": generate_gzip_candidates,
+    ".bz2": generate_bzip2_candidates,
+    ".xz": generate_xz_candidates,
+    ".zst": generate_zstd_candidates,
+}
+_HEADER_PARSERS: dict[str, Callable[[Path], Header | None]] = {
+    ".gz": parse_gzip_header,
+    ".bz2": parse_bzip2_header,
+    ".xz": parse_xz_header,
+    ".zst": parse_zstd_header,
+}
 
 
 def iter_files(root: Path) -> Iterable[Path]:
@@ -36,16 +50,16 @@ def build_basename_index(roots: list[Path]) -> dict[str, list[Path]]:
     return idx
 
 
-def choose_candidate(candidates: list[Path], expected_size: int | None) -> Path | None:
-    if not candidates:
-        return None
-    if expected_size is not None:
-        sized = [p for p in candidates if p.exists() and p.stat().st_size == expected_size]
-        if len(sized) == 1:
-            return sized[0]
-        if len(sized) > 1:
-            return max(sized, key=lambda p: p.stat().st_mtime)
-    return max(candidates, key=lambda p: p.stat().st_mtime)
+def _ordered_partial_candidates(candidates: list[Path], expected_size: int | None) -> list[tuple[Path, int]]:
+    """Live ``(path, size)`` candidates: exact-size matches first, then newest."""
+    live: list[tuple[Path, os.stat_result]] = []
+    for p in candidates:
+        try:
+            live.append((p, p.stat()))
+        except OSError:
+            continue
+    live.sort(key=lambda x: (x[1].st_size == expected_size, x[1].st_mtime), reverse=True)
+    return [(p, st.st_size) for p, st in live]
 
 
 def copy_file(src: Path, dst: Path, dry_run: bool) -> None:
@@ -66,277 +80,189 @@ class Result:
     missing: int
 
 
-def _should_skip_file(tf, dst: Path, overwrite: bool) -> bool:
-    """Check if a file should be skipped during recovery."""
-    # Skip padding files (BEP47)
-    if tf.attr and "p" in tf.attr:
-        return True
+@dataclass(frozen=True)
+class _Ctx:
+    """Shared recovery state passed to the per-file strategies."""
 
-    # Handle .gz, .bz2, .xz, and .zst files (skip symlinks and other files)
-    if not (tf.rel_path.endswith((".gz", ".bz2", ".xz", ".zst"))):
-        return True
+    meta: TorrentMeta
+    partial_index: dict[str, list[Path]]
+    raw_index: dict[str, list[Path]]
+    hash_algo: str
+    brute_force: bool
+    dry_run: bool
 
-    # Skip if destination exists and overwrite is False
-    if dst.exists() and not overwrite:
-        return True
 
-    return False
+def _extension(rel_path: str) -> str | None:
+    """Return the compression extension of a torrent file, or None."""
+    ext = Path(rel_path).suffix.lower()
+    return ext if ext in _GENERATORS else None
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    """True if both paths refer to the same file (incl. symlinks/hardlinks)."""
+    if a == b:
+        return True
+    try:
+        return b.exists() and os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+# Suffix segments produced by alternate compression tools/levels, e.g.
+# "data.bin.pigz1.gz", "data.bin.bz6.bz2", "data.bin.pzstd19.zst".
+_VARIANT_SUFFIX_RE = re.compile(r"\.(?:pigz|pbz|bz|xz|pixz|zst|pzstd|gz)\d*(?:_rsync)?$", re.IGNORECASE)
 
 
 def _extract_raw_name(expected_name: str, rel_path: str) -> str:
     """Extract raw filename from compressed filename."""
-    if rel_path.endswith(".gz"):
-        return expected_name[: -len(".gz")]
-    # Handle double extensions like .bz1.bz2, .pbz6.bz2, etc.
-    elif expected_name.endswith(".bz2"):
-        # Remove the last .bz2 extension
-        without_bz2 = expected_name[: -len(".bz2")]
-        # Check if there's another compression extension
-        if without_bz2.endswith((".bz1", ".bz6", ".bz9", ".pbz1", ".pbz6", ".pbz9")):
-            # Remove the compression level extension too
-            if without_bz2.endswith((".bz1", ".bz6", ".bz9")):
-                return without_bz2[:-4]  # Remove .bzX
-            else:  # .pbzX
-                return without_bz2[:-5]  # Remove .pbzX
-        else:
-            return without_bz2
-    elif rel_path.endswith(".xz"):
-        return expected_name[: -len(".xz")]
-    elif rel_path.endswith(".zst"):
-        return expected_name[: -len(".zst")]
-    else:
+    ext = _extension(rel_path)
+    if ext is None:
         return expected_name
+    without_ext = expected_name[: -len(ext)]
+    # Strip tool/level variant segments, e.g. ".pigz9" or ".bz6"
+    while _VARIANT_SUFFIX_RE.search(without_ext):
+        without_ext = _VARIANT_SUFFIX_RE.sub("", without_ext)
+    return without_ext
 
 
-def _validate_all_pieces_for_file(tf, meta, piece_length: int, file_path: Path) -> bool:
-    """Validate all pieces that a file spans against the torrent hashes."""
-    if tf.offset is None or tf.length is None:
+def _contained_pieces(meta: TorrentMeta, tf: TorrentFile, total_length: int) -> list[tuple[int, int, int]]:
+    """All pieces lying fully inside this file's data.
+
+    Yields ``(piece_index, offset_within_file, piece_size)`` tuples. Pieces
+    overlapping a file boundary hash data from the neighbouring file and
+    cannot be verified from this file alone; the torrent's final piece may
+    be short.
+    """
+    pl = meta.piece_length
+    if pl <= 0 or not meta.pieces or tf.length is None:
+        return []
+    start = tf.offset // pl + (1 if tf.offset % pl else 0)
+    pieces = []
+    for idx in range(start, len(meta.pieces)):
+        in_off = idx * pl - tf.offset
+        piece_size = min(pl, total_length - idx * pl)
+        if piece_size <= 0:
+            break  # malformed torrent: more pieces than data
+        if in_off + piece_size > tf.length:
+            break  # subsequent pieces start even further inside the file
+        pieces.append((idx, in_off, piece_size))
+    return pieces
+
+
+def sha1_piece(data: bytes) -> bytes:
+    """Return SHA-1 hash of data."""
+    return hashlib.sha1(data).digest()
+
+
+def sha256_piece(data: bytes) -> bytes:
+    """Return SHA-256 hash of data."""
+    return hashlib.sha256(data).digest()
+
+
+def _hash_fn(ctx: _Ctx) -> Callable[[bytes], bytes]:
+    return sha256_piece if ctx.hash_algo == "sha256" else sha1_piece
+
+
+def _try_partial_recovery(ctx: _Ctx, tf: TorrentFile, expected_name: str, dst: Path, pieces: list[tuple[int, int, int]]) -> bool:
+    """Recover by reusing an existing (partial) download of the compressed file.
+
+    Every piece fully contained in the file's data that the candidate actually
+    holds must match — for a complete candidate that is a whole-file check.
+    Every same-named partial candidate is tried, exact-size matches first.
+    """
+    if not pieces:
         return False
+    hash_fn = _hash_fn(ctx)
+    need = pieces[-1][1] + pieces[-1][2]  # bytes up to the last contained piece
 
-    start_piece_index = tf.offset // piece_length
-    end_piece_index = (tf.offset + tf.length - 1) // piece_length
+    for chosen, size in _ordered_partial_candidates(ctx.partial_index.get(expected_name, []), tf.length):
+        if tf.length is not None and size > tf.length:
+            continue  # longer than the expected file — cannot be its content
+        try:
+            with chosen.open("rb") as f:
+                data = f.read(need)
+        except OSError:
+            continue
+        verified = False
+        rejected = False
+        for idx, in_off, piece_size in pieces:
+            if in_off + piece_size > len(data):
+                break  # truncated partial — nothing more to check
+            if hash_fn(data[in_off : in_off + piece_size]) != ctx.meta.pieces[idx]:
+                rejected = True  # has the bytes but they are wrong
+                break
+            verified = True
+        if rejected or not verified:
+            continue
 
-    # Check each piece the file spans
-    for piece_index in range(start_piece_index, end_piece_index + 1):
-        if piece_index >= len(meta.pieces):
-            return False
-
-        expected_hash = meta.pieces[piece_index]
-
-        # Calculate the offset of this piece relative to file start
-        piece_global_offset = piece_index * piece_length
-        file_offset_in_piece = piece_global_offset - tf.offset
-
-        # Extract the piece data from the file
-        if file_offset_in_piece < 0:
-            # Piece starts before file, we need partial data
-            piece_data = _extract_piece_data_from_file(file_path, piece_global_offset, piece_length)
-        elif file_offset_in_piece + piece_length <= tf.length:
-            # Entire piece is within this file
-            piece_data = _extract_piece_data_from_file(file_path, tf.offset + file_offset_in_piece, piece_length)
-        else:
-            # Piece extends beyond file end, take what we have
-            piece_data = _extract_piece_data_from_file(file_path, tf.offset + file_offset_in_piece, piece_length)
-
-        if not piece_data or len(piece_data) != piece_length:
-            return False
-
-        if sha1_piece(piece_data) != expected_hash:
-            return False
-
-    return True
-
-
-def _extract_piece_data_from_file(file_path: Path, file_offset: int, piece_length: int) -> bytes | None:
-    """Extract piece data from a file considering file offset within the piece."""
-    if not file_path.exists():
-        return None
-
-    file_size = file_path.stat().st_size
-    offset_in_piece = file_offset % piece_length
-
-    # Calculate how much data we need from this file for this piece
-    available_in_file = file_size - offset_in_piece
-    if available_in_file <= 0:
-        return None
-
-    # We need piece_length bytes total, but only have available_in_file from this file
-    needed_from_file = min(piece_length - offset_in_piece, available_in_file)
-
-    try:
-        with file_path.open("rb") as f:
-            f.seek(offset_in_piece)
-            return f.read(needed_from_file)
-    except OSError:
-        return None
-
-
-def _get_piece_info(tf, meta, piece_length: int) -> tuple[int, bytes] | None:
-    """Get piece index and hash for a torrent file."""
-    if tf.offset is None or tf.length is None:
-        return None
-    start_piece_index = tf.offset // piece_length
-    if start_piece_index >= len(meta.pieces):
-        return None
-    return start_piece_index, meta.pieces[start_piece_index]
-
-
-def _try_partial_recovery(
-    tf, expected_name: str, partial_index, target_piece_hash: bytes, piece_length: int, dst: Path, overwrite: bool, dry_run: bool
-) -> bool:
-    """Try to recover from partial file."""
-    cand_partial = partial_index.get(expected_name, [])
-    chosen = choose_candidate(cand_partial, tf.length)
-    if chosen is None:
-        return False
-
-    # First, try the enhanced validation for files with offset info
-    if tf.offset is not None:
-        # Extract piece data considering file offset within the piece
-        piece_data = _extract_piece_data_from_file(chosen, tf.offset, piece_length)
-        if piece_data and len(piece_data) == piece_length:
-            if sha1_piece(piece_data) == target_piece_hash:
-                # Additional validation: check all pieces if file spans multiple pieces
-                if tf.length > piece_length:
-                    # For multi-piece files, validate all pieces (more thorough but slower)
-                    # This is optional - we could skip for performance
-                    pass
-
-                if not dry_run and dst.exists() and overwrite:
-                    dst.unlink()
-                copy_file(chosen, dst, dry_run)
-                return True
-    elif chosen.stat().st_size >= piece_length:
-        # Fallback to original logic for files without offset info
-        piece_data = chosen.read_bytes()[:piece_length]
-        if sha1_piece(piece_data) == target_piece_hash:
-            if not dry_run and dst.exists() and overwrite:
-                dst.unlink()
-            copy_file(chosen, dst, dry_run)
+        # The found partial may already sit at the destination (in-place
+        # mode, or overlapping dirs) — then nothing needs to be written.
+        if _same_file(chosen, dst):
             return True
-
+        copy_file(chosen, dst, ctx.dry_run)
+        return True
     return False
 
 
-def _parse_header_from_partial(tf, expected_name: str, partial_index, is_gz: bool):
-    """Parse compression header from partial file."""
-    cand_partial = partial_index.get(expected_name, [])
-    chosen = choose_candidate(cand_partial, tf.length)
-    if chosen is None:
+def _partial_header(ctx: _Ctx, tf: TorrentFile, expected_name: str) -> Header | None:
+    """Parse the compression header from the first parseable partial file."""
+    parser = _HEADER_PARSERS.get(_extension(tf.rel_path) or "")
+    if parser is None:
         return None
-
-    if is_gz:
-        return parse_gzip_header(chosen)
-    elif tf.rel_path.endswith(".bz2"):
-        return parse_bzip2_header(chosen)
-    elif tf.rel_path.endswith(".xz"):
-        return parse_xz_header(chosen)
-    elif tf.rel_path.endswith(".zst"):
-        return parse_zstd_header(chosen)
-    else:
-        return None
+    for chosen, _size in _ordered_partial_candidates(ctx.partial_index.get(expected_name, []), tf.length):
+        try:
+            header = parser(chosen)
+        except OSError:
+            continue
+        if header is not None:
+            return header
+    return None
 
 
-def _try_sha1_match(
-    tf, raw_name: str, raw_index, header, target_piece_hash: bytes, piece_length: int, hash_algo: str, dst: Path, overwrite: bool, dry_run: bool, is_gz: bool
-) -> tuple[bool, int]:
-    """Try recovery using BEP47 SHA1 hash matching."""
-    if not tf.sha1:
-        return False, 0
+def _recompress_from_raw(ctx: _Ctx, tf: TorrentFile, ext: str, dst: Path, pieces: list[tuple[int, int, int]]) -> bool:
+    """Regenerate the compressed file from the raw file and verify against the torrent.
 
-    # Look for existing files with matching SHA1
-    for raw_path in raw_index.get(raw_name, []):
-        if raw_path.stat().st_size == tf.length:
-            with raw_path.open("rb") as f:
-                file_hash = hashlib.sha1(f.read()).digest()
-            if file_hash == tf.sha1:
-                # Found exact match by SHA1, compress it
-                if is_gz:
-                    candidates = generate_gzip_candidates(raw_path, header)
-                    match_func = find_gzip_candidate
-                elif tf.rel_path.endswith(".bz2"):
-                    candidates = generate_bzip2_candidates(raw_path, header)
-                    match_func = find_bzip2_candidate
-                elif tf.rel_path.endswith(".xz"):
-                    candidates = generate_xz_candidates(raw_path, header)
-                    match_func = find_xz_candidate
-                elif tf.rel_path.endswith(".zst"):
-                    candidates = generate_zstd_candidates(raw_path, header)
-                    match_func = find_zstd_candidate
-                else:
-                    return False, 0
+    With a BEP47 per-file SHA-1 only a full-file hash match is accepted — a
+    piece-only match without it would produce a file the torrent rejects.
+    Otherwise every piece fully contained in the file must match.
+    """
+    expected_name = Path(tf.rel_path).name
+    raw_name = _extract_raw_name(expected_name, tf.rel_path)
+    raw_candidates = ctx.raw_index.get(raw_name, [])
+    if not raw_candidates:
+        return False
 
-                match = match_func(candidates, target_piece_hash, piece_length, hash_algo)
-                if match:
-                    _, data = match
-                    if not dry_run and dst.exists() and overwrite:
-                        dst.unlink()
-                    dst.parent.mkdir(parents=True, exist_ok=True)
-                    if not dry_run:
-                        dst.write_bytes(data)
+    generate = _GENERATORS[ext]
+    header = _partial_header(ctx, tf, expected_name)
+    hash_fn = _hash_fn(ctx)
 
-                    # Return appropriate counter
-                    if is_gz:
-                        return True, 1  # gzipped
-                    elif tf.rel_path.endswith(".bz2"):
-                        return True, 1  # bzipped
-                    elif tf.rel_path.endswith(".xz"):
-                        return True, 1  # xzipped
-                    elif tf.rel_path.endswith(".zst"):
-                        return True, 1  # zstipped
-    return False, 0
+    for raw_src in raw_candidates:
+        candidates = generate(raw_src, header, brute=ctx.brute_force)
+
+        match = None
+        if tf.sha1:
+            match = next((data for _, data in candidates if sha1_piece(data) == tf.sha1), None)
+        elif pieces:
+            match = next(
+                (
+                    data
+                    for _, data in candidates
+                    if (tf.length is None or len(data) == tf.length)
+                    and all(hash_fn(data[off : off + size]) == ctx.meta.pieces[idx] for idx, off, size in pieces)
+                ),
+                None,
+            )
+        if match is None:
+            continue
+
+        if not ctx.dry_run:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_bytes(match)
+        return True
+    return False
 
 
-def _try_brute_force_recovery(
-    tf, raw_name: str, raw_index, header, target_piece_hash: bytes, piece_length: int, hash_algo: str, dst: Path, overwrite: bool, dry_run: bool, is_gz: bool
-) -> tuple[bool, int]:
-    """Try recovery using brute-force candidate generation."""
-    cand_raw = raw_index.get(raw_name, [])
-    raw_src = choose_candidate(cand_raw, None)
-    if raw_src is None:
-        return False, 0
-
-    # Generate candidates and find one that matches the first piece hash
-    if is_gz:
-        candidates = generate_gzip_candidates(raw_src, header)
-        match_func = find_gzip_candidate
-    elif tf.rel_path.endswith(".bz2"):
-        candidates = generate_bzip2_candidates(raw_src, header)
-        match_func = find_bzip2_candidate
-    elif tf.rel_path.endswith(".xz"):
-        candidates = generate_xz_candidates(raw_src, header)
-        match_func = find_xz_candidate
-    elif tf.rel_path.endswith(".zst"):
-        candidates = generate_zstd_candidates(raw_src, header)
-        match_func = find_zstd_candidate
-    else:
-        return False, 0
-
-    match = match_func(candidates, target_piece_hash, piece_length, hash_algo)
-    if match is None:
-        return False, 0
-
-    _, data = match
-    if not dry_run and dst.exists() and overwrite:
-        dst.unlink()
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    if not dry_run:
-        dst.write_bytes(data)
-
-    # Return appropriate counter
-    if is_gz:
-        return True, 1  # gzipped
-    elif tf.rel_path.endswith(".bz2"):
-        return True, 1  # bzipped
-    elif tf.rel_path.endswith(".xz"):
-        return True, 1  # xzipped
-    elif tf.rel_path.endswith(".zst"):
-        return True, 1  # zstipped
-    else:
-        return False, 0
-
-
-def recover(
+def recover(  # noqa: PLR0913 - public API; most parameters are keyword-only
     torrent_path: Path,
     raw_dir: Path,
     partial_dir: Path,
@@ -346,117 +272,72 @@ def recover(
     overwrite: bool = False,
     dry_run: bool = False,
     filename_filter: str | None = None,
+    brute_force: bool = True,
 ) -> Result:
     meta = parse_torrent(str(torrent_path))
     out_root = target_dir / meta.name if target_dir else partial_dir
-    inplace_mode = target_dir is None
+    # Total data length across all files; needed to size the last (short) piece
+    total_length = max((tf.offset + (tf.length or 0) for tf in meta.files), default=0)
 
-    partial_index = build_basename_index([partial_dir])
-    raw_index = build_basename_index([raw_dir])
+    ctx = _Ctx(
+        meta=meta,
+        partial_index=build_basename_index([partial_dir]),
+        raw_index=build_basename_index([raw_dir]) if raw_fallback else {},
+        # v1 and hybrid pieces are SHA-1; v2 uses SHA-256 piece layers
+        hash_algo="sha256" if meta.version == "v2" else "sha1",
+        brute_force=brute_force,
+        dry_run=dry_run,
+    )
 
     recovered = 0
-    gzipped = 0
-    bzipped = 0
-    xzipped = 0
-    zstipped = 0
+    compressed = dict.fromkeys(_GENERATORS, 0)
     skipped = 0
     missing = 0
 
     for tf in meta.files:
         expected_name = Path(tf.rel_path).name
+        # Preserve the torrent's relative layout; in-place mode writes next
+        # to the partial download at partial_dir/<rel_path>.
+        dst = out_root / tf.rel_path
 
-        # In in-place mode, write directly to the partial file location
-        if inplace_mode:
-            dst = partial_dir / expected_name
-        else:
-            dst = out_root / tf.rel_path
-
-        # Skip if filename filter is specified and doesn't match
         if filename_filter and expected_name != filename_filter:
             continue
 
-        # Check if we should skip this file
-        if _should_skip_file(tf, dst, overwrite):
+        ext = _extension(tf.rel_path)
+        # Skip padding and symlink members (BEP47, no payload data), files
+        # without a compression extension, empty members and existing outputs
+        if ext is None or (tf.attr and ("p" in tf.attr or "l" in tf.attr)) or (dst.exists() and not overwrite):
             skipped += 1
             continue
 
-        # Get piece information
-        piece_info = _get_piece_info(tf, meta, meta.piece_length)
-        if piece_info is None:
+        if tf.length is None or tf.length <= 0:
             missing += 1
             continue
-        _, target_piece_hash = piece_info
+        pieces = _contained_pieces(meta, tf, total_length)
 
-        # Extract raw name and determine file type
-        raw_name = _extract_raw_name(expected_name, tf.rel_path)
-        is_gz = tf.rel_path.endswith(".gz")
+        # Isolate per-file failures: one unreadable/unwritable file must not
+        # abort the recovery of the remaining torrent members.
+        try:
+            # 1) Reuse a matching (partial) download of the compressed file
+            if _try_partial_recovery(ctx, tf, expected_name, dst, pieces):
+                recovered += 1
+                continue
 
-        # 1) Try to find a partial file and use it as a candidate
-        if _try_partial_recovery(tf, expected_name, partial_index, target_piece_hash, meta.piece_length, dst, overwrite, dry_run):
-            recovered += 1
-            continue
-
-        # Parse header from partial file for brute-force
-        header = _parse_header_from_partial(tf, expected_name, partial_index, is_gz)
-
-        # 1a) Check if we have a matching file by BEP47 per-file SHA1
-        sha1_success, compressed_count = _try_sha1_match(
-            tf,
-            raw_name,
-            raw_index,
-            header,
-            target_piece_hash,
-            meta.piece_length,
-            "sha256" if meta.version in {"v2", "hybrid"} else "sha1",
-            dst,
-            overwrite,
-            dry_run,
-            is_gz,
-        )
-        if sha1_success:
-            if tf.rel_path.endswith(".gz"):
-                gzipped += compressed_count
-            elif tf.rel_path.endswith(".bz2"):
-                bzipped += compressed_count
-            elif tf.rel_path.endswith(".xz"):
-                xzipped += compressed_count
-            elif tf.rel_path.endswith(".zst"):
-                zstipped += compressed_count
-            continue
-
-        # 2) Find raw file for brute-force generation
-        brute_force_success, compressed_count = _try_brute_force_recovery(
-            tf,
-            raw_name,
-            raw_index,
-            header,
-            target_piece_hash,
-            meta.piece_length,
-            "sha256" if meta.version in {"v2", "hybrid"} else "sha1",
-            dst,
-            overwrite,
-            dry_run,
-            is_gz,
-        )
-        if brute_force_success:
-            if tf.rel_path.endswith(".gz"):
-                gzipped += compressed_count
-            elif tf.rel_path.endswith(".bz2"):
-                bzipped += compressed_count
-            elif tf.rel_path.endswith(".xz"):
-                xzipped += compressed_count
-            elif tf.rel_path.endswith(".zst"):
-                zstipped += compressed_count
-            continue
+            # 2) Regenerate the compressed file from the raw file (opt-in)
+            if raw_fallback and _recompress_from_raw(ctx, tf, ext, dst, pieces):
+                compressed[ext] += 1
+                continue
+        except OSError as e:
+            logging.warning(f"{tf.rel_path}: recovery failed: {e}")
 
         missing += 1
 
     return Result(
         recovered=recovered,
-        gzipped=gzipped,
-        bzipped=bzipped,
-        xzipped=xzipped,
-        zstipped=zstipped,
+        gzipped=compressed[".gz"],
+        bzipped=compressed[".bz2"],
+        xzipped=compressed[".xz"],
+        zstipped=compressed[".zst"],
         skipped=skipped,
         missing=missing,
     )

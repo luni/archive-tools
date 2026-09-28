@@ -69,7 +69,7 @@ uv run torrent-compress-recovery \
 - `--dry-run`: Show what would be done without writing anything.
 - `--header-info`: Show gzip header info for partial files and exit.
 - `--verify-only`: Verify raw files against gzip trailers and exit.
-- `--brute-force`: Enable brute-force candidate generation.
+- `--brute-force` / `--no-brute-force`: Enable/disable the tool × compression-level candidate matrix when recompressing raw files (default: enabled; `--no-brute-force` limits fallback to the header-guided candidate).
 - `--filename`: Process only this specific filename (basename match).
 - `--target-dir`: Output folder (optional - if not specified, files will be recovered in-place in partial-dir).
 
@@ -81,26 +81,3 @@ The tool supports multiple compression formats for fallback compression:
 - **bzip2** (`.bz2`) - Built-in Python implementation
 - **xz** (`.xz`) - Requires `xz` or `pixz` command-line tools
 - **zstd** (`.zst`) - Requires `zstd` or `pzstd` command-line tools
-
-## Extending to other compressors
-
-The core logic is modular; add a new compressor in `torrent_compress_recovery/compressors.py`:
-
-1. Create a class inheriting from `Compressor`
-2. Implement the `extension` property and `compress` method
-3. Register it in the `_COMPRESSORS` dictionary
-
-Example:
-```python
-class MyCompressor(Compressor):
-    @property
-    def extension(self) -> str:
-        return ".myext"
-
-    def compress(self, src: Path, dst: Path, dry_run: bool) -> None:
-        # Implementation here
-        pass
-
-# Register the compressor
-_COMPRESSORS[".myext"] = MyCompressor
-```

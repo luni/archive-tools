@@ -110,6 +110,9 @@ class TestOverlappingPieces:
         mock_result = mock_recover.return_value
         mock_result.recovered = 2
         mock_result.gzipped = 0
+        mock_result.bzipped = 0
+        mock_result.xzipped = 0
+        mock_result.zstipped = 0
         mock_result.skipped = 0
         mock_result.missing = 0
 

@@ -1,0 +1,60 @@
+name: Torrent Compress Recovery Mutation Testing
+
+on:
+  # nightly, 04:00 UTC
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mutmut:
+    name: Mutation Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    defaults:
+      run:
+        working-directory: tools/torrent_compress_recovery
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install compression tools for test fixtures
+        run: |
+          sudo apt-get update
+          DEBIAN_FRONTEND=noninteractive sudo apt-get install -y --no-install-recommends \
+            xz-utils pixz zstd bzip2 pbzip2 gzip pigz
+          sudo rm -rf /var/lib/apt/lists/*
+
+      - name: Set up Python environment
+        run: uv sync
+
+      - name: Create test fixtures
+        run: |
+          cd tests/fixtures
+          ./prepare_real_data.sh
+          ./prepare_v2_data.sh
+
+      - name: Run mutmut
+        run: uv run mutmut run
+
+      - name: Show results
+        if: always()
+        run: uv run mutmut results
+
+      - name: Upload mutmut results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutmut-results
+          path: tools/torrent_compress_recovery/mutants/
+          retention-days: 30

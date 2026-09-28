@@ -1,6 +1,5 @@
 """Bzip2 header parsing and brute-force generation utilities tests."""
 
-import hashlib
 import shutil
 import subprocess
 from pathlib import Path
@@ -8,15 +7,12 @@ from pathlib import Path
 import pytest
 
 from torrent_compress_recovery.bz2 import (
-    BZIP2_MAGIC,
     BZIP2_MAX_LEVEL,
     BZIP2_MIN_LEVEL,
     Bzip2Header,
     _get_block_size_description,
     format_bzip2_header,
     parse_bzip2_header,
-    patch_bzip2_header,
-    sha1_piece,
 )
 
 
@@ -56,22 +52,6 @@ def test_format_bzip2_header():
     assert "block size: 900,000 bytes (900 KB)" in out_level9
 
 
-def test_patch_bzip2_header(temp_dir: Path):
-    """Test patching bzip2 header."""
-    # Create minimal bzip2-like data
-    bz2_magic = b"BZh"
-    level_byte = b"1"  # Level 1
-    data = bz2_magic + level_byte + b"some compressed data"
-
-    # Create new header with level 9
-    new_header = Bzip2Header(level=9, block_size=900000)
-    patched = patch_bzip2_header(data, new_header)
-
-    # Check that compression level was updated
-    assert patched[3:4] == b"9"  # Level should be 9
-    assert patched.startswith(BZIP2_MAGIC)
-
-
 def test_generate_bzip2_candidates(temp_dir: Path):
     """Test generating bzip2 compression candidates."""
     if not shutil.which("bzip2"):
@@ -100,85 +80,6 @@ def test_generate_bzip2_candidates(temp_dir: Path):
             assert len(data) > 0
     except ImportError:
         pytest.skip("generate_bzip2_candidates not available")
-
-
-def test_sha1_piece():
-    """Test SHA-1 piece hashing."""
-    data = b"test data for sha1"
-    hash_result = sha1_piece(data)
-
-    # Verify it's a 20-byte SHA-1 hash
-    assert isinstance(hash_result, bytes)
-    assert len(hash_result) == 20
-
-    # Verify consistency
-    hash_result2 = sha1_piece(data)
-    assert hash_result == hash_result2
-
-
-def test_sha256_piece():
-    """Test SHA-256 piece hashing."""
-    data = b"test data for sha256"
-
-    # Import here to avoid circular imports if the function doesn't exist
-    try:
-        from torrent_compress_recovery.bz2 import sha256_piece
-
-        hash_result = sha256_piece(data)
-
-        # Verify it's a 32-byte SHA-256 hash
-        assert isinstance(hash_result, bytes)
-        assert len(hash_result) == 32
-
-        # Verify consistency
-        hash_result2 = sha256_piece(data)
-        assert hash_result == hash_result2
-    except ImportError:
-        pytest.skip("sha256_piece not available")
-
-
-def test_find_matching_candidate():
-    """Test finding matching candidate for bzip2 data."""
-    data = b"test data for matching"
-    hash_result = hashlib.sha1(data).digest()
-
-    # Import here to avoid circular imports if the function doesn't exist
-    try:
-        from torrent_compress_recovery.bz2 import find_matching_candidate as find_bzip2_candidate
-
-        # Test with matching candidate
-        candidates = [("test_candidate", data)]
-        result = find_bzip2_candidate(candidates, hash_result, piece_length=len(data))
-        assert result == ("test_candidate", data)
-
-        # Test with no matching candidate
-        candidates = [("wrong_candidate", b"wrong data")]
-        result = find_bzip2_candidate(candidates, hash_result, piece_length=len(data))
-        assert result is None
-    except ImportError:
-        pytest.skip("find_matching_candidate not available")
-
-
-def test_find_matching_candidate_sha256():
-    """Test finding matching candidate for bzip2 data using SHA-256."""
-    data = b"test data for sha256 matching"
-    hash_result = hashlib.sha256(data).digest()
-
-    # Import here to avoid circular imports if the function doesn't exist
-    try:
-        from torrent_compress_recovery.bz2 import find_matching_candidate_sha256
-
-        # Test with matching candidate
-        candidates = [("test_candidate", data)]
-        result = find_matching_candidate_sha256(candidates, hash_result)
-        assert result == data
-
-        # Test with no matching candidate
-        candidates = [("wrong_candidate", b"wrong data")]
-        result = find_matching_candidate_sha256(candidates, hash_result)
-        assert result is None
-    except ImportError:
-        pytest.skip("find_matching_candidate_sha256 not available")
 
 
 def test_parse_bzip2_header_invalid_file(temp_dir: Path):
@@ -211,26 +112,6 @@ def test_parse_bzip2_header_invalid_level(temp_dir: Path):
 
     header = parse_bzip2_header(invalid_file)
     assert header is None
-
-
-def test_bzip2_header_usage_in_compression():
-    """Test that header information is actually used in compression."""
-    # Create minimal bzip2-like data
-    bz2_magic = b"BZh"
-    level_byte = b"1"  # Level 1
-    data = bz2_magic + level_byte + b"some compressed data"
-
-    # Test different header settings produce different results
-    header1 = Bzip2Header(level=1, block_size=100000)
-    header2 = Bzip2Header(level=9, block_size=900000)
-
-    patched1 = patch_bzip2_header(data, header1)
-    patched2 = patch_bzip2_header(data, header2)
-
-    # Results should be different
-    assert patched1 != patched2
-    assert patched1[3:4] == b"1"  # Level 1
-    assert patched2[3:4] == b"9"  # Level 9
 
 
 def test_get_block_size_description():

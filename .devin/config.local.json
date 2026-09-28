@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Exec(uv run *)",
+      "Exec(uv sync)",
+      "Exec(uv lock *)",
+      "Exec(make *)"
+    ]
+  }
+}

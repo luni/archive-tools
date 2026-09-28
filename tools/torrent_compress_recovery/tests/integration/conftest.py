@@ -92,7 +92,7 @@ def torrent_multi_file(integration_dir, gz_files_cli, tar_gz_file):
     ]
     try:
         # Try to create with a real tool
-        all_paths = list(gz_files_cli.values()) + [tar_gz_file]
+        all_paths = [*list(gz_files_cli.values()), tar_gz_file]
         cmd = ["transmission-create", "-o", str(torrent_path)] + [str(p) for p in all_paths]
         run_cmd(cmd, cwd=integration_dir)
     except (FileNotFoundError, subprocess.CalledProcessError):

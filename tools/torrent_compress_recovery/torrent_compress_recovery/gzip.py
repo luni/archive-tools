@@ -1,9 +1,9 @@
 """Gzip header parsing and brute-force generation utilities."""
 
 import gzip
-import hashlib
 import subprocess  # nosec B404
 import tempfile
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -40,6 +40,27 @@ class GzipHeader:
     extra: bytes | None = None
     fname: bytes | None = None
     fcomment: bytes | None = None
+    xfl: int = 0
+
+
+def _read_gzip_extra(path: Path, data: bytes, pos: int) -> tuple[bytes, bytes, int] | None:
+    """Read the FEXTRA field at pos, extending the buffer when XLEN exceeds it.
+
+    Returns (data, extra, new_pos) or None when the field is truncated.
+    """
+    if pos + GZIP_XLEN_SIZE > len(data):
+        return None
+    xlen = int.from_bytes(data[pos : pos + GZIP_XLEN_SIZE], "little")
+    pos += GZIP_XLEN_SIZE
+    if pos + xlen > len(data):
+        # Initial 256-byte read was too small for this extra field;
+        # extend the buffer contiguously (plus room for FNAME/FCOMMENT)
+        with path.open("rb") as f:
+            f.seek(len(data))
+            data += f.read(pos + xlen - len(data) + 4096)
+    if pos + xlen > len(data):
+        return None
+    return data, data[pos : pos + xlen], pos + xlen
 
 
 def parse_gzip_header(path: Path) -> GzipHeader | None:
@@ -53,17 +74,17 @@ def parse_gzip_header(path: Path) -> GzipHeader | None:
         return None
     flags = data[GZIP_FLAGS_POS]
     mtime = int.from_bytes(data[GZIP_MTIME_POS : GZIP_MTIME_POS + GZIP_MTIME_SIZE], "little")
-    # xfl = data[GZIP_XFL_POS]  # XFL not used in our implementation
+    xfl = data[GZIP_XFL_POS]
     os = data[GZIP_OS_POS]
     pos = GZIP_MIN_HEADER_SIZE
     extra = None
     fname = None
     fcomment = None
     if flags & GZIP_FLAG_FEXTRA:  # FEXTRA
-        xlen = int.from_bytes(data[pos : pos + GZIP_XLEN_SIZE], "little")
-        pos += GZIP_XLEN_SIZE
-        extra = data[pos : pos + xlen]
-        pos += xlen
+        res = _read_gzip_extra(path, data, pos)
+        if res is None:
+            return None
+        data, extra, pos = res
     if flags & GZIP_FLAG_FNAME:  # FNAME
         end = data.find(b"\x00", pos)
         if end == -1:
@@ -77,7 +98,7 @@ def parse_gzip_header(path: Path) -> GzipHeader | None:
         fcomment = data[pos:end]
         pos = end + 1
     # FHCRC (flags & 2) ignored for our purposes
-    return GzipHeader(mtime=mtime, os=os, flags=flags, extra=extra, fname=fname, fcomment=fcomment)
+    return GzipHeader(mtime=mtime, os=os, flags=flags, extra=extra, fname=fname, fcomment=fcomment, xfl=xfl)
 
 
 def _get_flag_names(flags: int) -> list[str]:
@@ -127,59 +148,62 @@ def format_gzip_header(header: GzipHeader) -> str:
     return "\n".join(lines)
 
 
-def patch_gzip_header(data: bytes, header: GzipHeader) -> bytes:
-    """Patch gzip header fields to match the provided header (mtime, OS, flags, fname, fcomment, extra)."""
-    if len(data) < GZIP_MIN_HEADER_SIZE:
-        return data
-    # Preserve method (should be 8)
-    patched = bytearray(data)
-    # Update flags
-    patched[GZIP_FLAGS_POS] = header.flags & 0xFF
-    # Update mtime (little-endian)
-    patched[GZIP_MTIME_POS : GZIP_MTIME_POS + GZIP_MTIME_SIZE] = header.mtime.to_bytes(GZIP_MTIME_SIZE, "little")
-    # Update XFL and OS
-    # Note: We don't store XFL in GzipHeader, so we leave it as-is or set to 0
-    patched[GZIP_XFL_POS] = 0  # XFL set to 0 for consistency
-    patched[GZIP_OS_POS] = header.os & 0xFF
+def _payload_offset(data: bytes) -> int | None:
+    """Return the offset where the compressed payload starts, or None if the
+    optional header fields cannot be walked."""
+    data_flags = data[GZIP_FLAGS_POS]
     pos = GZIP_MIN_HEADER_SIZE
-    # Handle FEXTRA
-    if header.flags & GZIP_FLAG_FEXTRA:
-        if header.extra is not None:
-            extra_len = len(header.extra)
-            patched = patched[:pos] + extra_len.to_bytes(GZIP_XLEN_SIZE, "little") + header.extra + patched[pos + GZIP_XLEN_SIZE :]
-            pos += GZIP_XLEN_SIZE + extra_len
-        else:
-            # Remove existing extra if any
-            extra_len = int.from_bytes(patched[pos : pos + GZIP_XLEN_SIZE], "little")
-            patched = patched[:pos] + patched[pos + GZIP_XLEN_SIZE + extra_len :]
-    # Handle FNAME
-    if header.flags & GZIP_FLAG_FNAME:
-        if header.fname is not None:
-            fname_bytes = header.fname + b"\x00"
-            patched = patched[:pos] + fname_bytes + patched[pos:]
-            pos += len(fname_bytes)
-        else:
-            # Remove existing fname if any
-            end = patched.find(b"\x00", pos)
-            if end != -1:
-                patched = patched[:pos] + patched[end + 1 :]
-                pos = len(patched)
-    # Handle FCOMMENT
-    if header.flags & GZIP_FLAG_FCOMMENT:
-        if header.fcomment is not None:
-            fcomment_bytes = header.fcomment + b"\x00"
-            patched = patched[:pos] + fcomment_bytes + patched[pos:]
-        else:
-            # Remove existing fcomment if any
-            end = patched.find(b"\x00", pos)
-            if end != -1:
-                patched = patched[:pos] + patched[end + 1 :]
-    return bytes(patched)
+    if data_flags & GZIP_FLAG_FEXTRA:
+        if pos + GZIP_XLEN_SIZE > len(data):
+            return None
+        pos += GZIP_XLEN_SIZE + int.from_bytes(data[pos : pos + GZIP_XLEN_SIZE], "little")
+    for flag in (GZIP_FLAG_FNAME, GZIP_FLAG_FCOMMENT):
+        if data_flags & flag:
+            end = data.find(b"\x00", pos)
+            if end == -1:
+                return None
+            pos = end + 1
+    if data_flags & GZIP_FLAG_FHCRC:
+        pos += 2
+    return pos if pos <= len(data) else None
 
 
-def sha1_piece(data: bytes) -> bytes:
-    """Return SHA-1 hash of data."""
-    return hashlib.sha1(data).digest()
+def patch_gzip_header(data: bytes, header: GzipHeader) -> bytes:
+    """Patch gzip header fields to match the provided header (mtime, OS, flags, fname, fcomment, extra, xfl)."""
+    if len(data) < GZIP_MIN_HEADER_SIZE or data[:2] != GZIP_MAGIC:
+        return data
+
+    # Locate the compressed payload by walking the optional fields present in
+    # the generated data itself (its own flag byte decides what is there).
+    pos = _payload_offset(data)
+    if pos is None:
+        return data
+    body = data[pos:]
+
+    # Emit only the optional-field bits we can actually satisfy; keep the
+    # remaining flag bits (e.g. FTEXT) from the requested header.
+    flags_out = header.flags & 0xFF
+    if header.extra is None:
+        flags_out &= ~GZIP_FLAG_FEXTRA
+    if header.fname is None:
+        flags_out &= ~GZIP_FLAG_FNAME
+    if header.fcomment is None:
+        flags_out &= ~GZIP_FLAG_FCOMMENT
+
+    out = bytearray(data[:GZIP_FLAGS_POS])  # magic + method
+    out.append(flags_out)
+    out += header.mtime.to_bytes(GZIP_MTIME_SIZE, "little")
+    out.append(header.xfl & 0xFF)
+    out.append(header.os & 0xFF)
+    if header.extra is not None:
+        out += len(header.extra).to_bytes(GZIP_XLEN_SIZE, "little") + header.extra
+    if header.fname is not None:
+        out += header.fname + b"\x00"
+    if header.fcomment is not None:
+        out += header.fcomment + b"\x00"
+    if flags_out & GZIP_FLAG_FHCRC:
+        out += (zlib.crc32(bytes(out)) & 0xFFFF).to_bytes(2, "little")
+    return bytes(out) + body
 
 
 def _generate_header_match_candidate(src_bytes: bytes, header: GzipHeader) -> tuple[str, bytes]:
@@ -217,7 +241,9 @@ def _build_command(tool: str, level: int, no_name: bool, rsyncable: bool) -> lis
     return cmd
 
 
-def _generate_tool_candidate(src: Path, tool: str, level: int, no_name: bool, rsyncable: bool, header: GzipHeader | None) -> tuple[str, bytes] | None:
+def _generate_tool_candidate(  # noqa: PLR0913, PLR0917
+    src: Path, tool: str, level: int, no_name: bool, rsyncable: bool, header: GzipHeader | None
+) -> tuple[str, bytes] | None:
     """Generate a candidate using a specific tool and settings."""
     cmd = _build_command(tool, level, no_name, rsyncable)
     cmd.extend(["-c", str(src)])
@@ -233,14 +259,20 @@ def _generate_tool_candidate(src: Path, tool: str, level: int, no_name: bool, rs
         return None
 
 
-def generate_gzip_candidates(src: Path, header: GzipHeader | None) -> list[tuple[str, bytes]]:
-    """Generate candidate gzip bytes for a source file using common tools/settings."""
+def generate_gzip_candidates(src: Path, header: GzipHeader | None, *, brute: bool = True) -> list[tuple[str, bytes]]:
+    """Generate candidate gzip bytes for a source file using common tools/settings.
+
+    With ``brute=False`` only the header-guided candidate is produced.
+    """
     candidates: list[tuple[str, bytes]] = []
     src_bytes = src.read_bytes()
 
     # 1) Try to match header settings if available
     if header:
         candidates.append(_generate_header_match_candidate(src_bytes, header))
+
+    if not brute:
+        return candidates
 
     # 2) Brute-force common tools/levels
     tools = _get_available_tools()
@@ -255,25 +287,3 @@ def generate_gzip_candidates(src: Path, header: GzipHeader | None) -> list[tuple
                         candidates.append(candidate)
 
     return candidates
-
-
-def sha256_piece(data: bytes) -> bytes:
-    """Return SHA-256 hash of data."""
-    return hashlib.sha256(data).digest()
-
-
-def find_matching_candidate(
-    candidates: list[tuple[str, bytes]],
-    target_piece_hash: bytes,
-    piece_length: int,
-    hash_algo: str = "sha1",
-) -> tuple[str, bytes] | None:
-    """Return the first candidate whose first piece hash matches."""
-    hash_fn = sha1_piece if hash_algo == "sha1" else sha256_piece
-    for label, data in candidates:
-        if len(data) < piece_length:
-            continue
-        piece = data[:piece_length]
-        if hash_fn(piece) == target_piece_hash:
-            return label, data
-    return None

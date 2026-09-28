@@ -1,6 +1,5 @@
 """Tests for XZ header parsing, patching, and candidate generation."""
 
-import hashlib
 import shutil
 import subprocess
 from pathlib import Path
@@ -9,13 +8,10 @@ import pytest
 
 from torrent_compress_recovery.xz import (
     XzHeader,
-    find_matching_candidate,
     format_xz_header,
     generate_xz_candidates,
     parse_xz_header,
     patch_xz_header,
-    sha1_piece,
-    sha256_piece,
 )
 
 
@@ -50,7 +46,7 @@ def test_format_xz_header():
     assert "check_type: NONE" in out
 
     # Test with different check types
-    header_crc64 = XzHeader(flags=0x101, has_crc64=True, check_type=4)  # CRC64 flag + CRC64 check type
+    header_crc64 = XzHeader(flags=0x400, has_crc64=True, check_type=4)  # check type 4 (CRC64) in stream-flag byte 7
     out_crc64 = format_xz_header(header_crc64)
     assert "check_type: CRC64" in out_crc64
     assert "has_crc64: True" in out_crc64
@@ -76,8 +72,8 @@ def test_patch_xz_header(temp_dir: Path):
     new_header = XzHeader(flags=0, has_crc64=False, check_type=0)
     patched = patch_xz_header(data, new_header)
 
-    # Check that stream flags were updated
-    assert patched[6:8] == new_header.flags.to_bytes(2, "little")
+    # Check that stream flags were updated (byte 6 zero, check in byte 7)
+    assert patched[6:8] == (new_header.check_type << 8).to_bytes(2, "little")
 
 
 def test_generate_xz_candidates(temp_dir: Path):
@@ -103,52 +99,6 @@ def test_generate_xz_candidates(temp_dir: Path):
         assert len(data) > 0
 
 
-def test_sha1_piece():
-    """Test SHA1 piece hashing."""
-    data = b"hello"
-    expected = hashlib.sha1(data).digest()
-    assert sha1_piece(data) == expected
-
-
-def test_sha256_piece():
-    """Test SHA256 piece hashing."""
-    data = b"world"
-    expected = hashlib.sha256(data).digest()
-    assert sha256_piece(data) == expected
-
-
-def test_find_matching_candidate():
-    """Test finding matching candidate by hash."""
-    candidates = [
-        ("a", b"foo"),
-        ("b", b"bar"),
-        ("c", b"baz"),
-    ]
-    target_hash = sha1_piece(b"bar")
-    match = find_matching_candidate(candidates, target_hash, piece_length=3, hash_algo="sha1")
-    assert match is not None
-    assert match[0] == "b"
-    assert match[1] == b"bar"
-
-    # No match
-    wrong_hash = sha1_piece(b"qux")
-    assert find_matching_candidate(candidates, wrong_hash, piece_length=3, hash_algo="sha1") is None
-
-
-def test_find_matching_candidate_sha256():
-    """Test finding matching candidate by SHA256 hash."""
-    candidates = [
-        ("a", b"foo"),
-        ("b", b"bar"),
-        ("c", b"baz"),
-    ]
-    target_hash = sha256_piece(b"bar")
-    match = find_matching_candidate(candidates, target_hash, piece_length=3, hash_algo="sha256")
-    assert match is not None
-    assert match[0] == "b"
-    assert match[1] == b"bar"
-
-
 def test_parse_xz_header_invalid_file(temp_dir: Path):
     """Test parsing header from invalid XZ file."""
     invalid_file = temp_dir / "invalid.xz"
@@ -168,15 +118,15 @@ def test_xz_header_usage_in_compression():
 
     # Test different header settings produce different results
     header1 = XzHeader(flags=0x100, has_crc64=False, check_type=1)  # CRC32
-    header2 = XzHeader(flags=0x104, has_crc64=True, check_type=4)  # CRC64
+    header2 = XzHeader(flags=0x400, has_crc64=True, check_type=4)  # CRC64
 
     patched1 = patch_xz_header(data, header1)
     patched2 = patch_xz_header(data, header2)
 
     # Results should be different
     assert patched1 != patched2
-    assert patched1[6:8] == header1.flags.to_bytes(2, "little")
-    assert patched2[6:8] == header2.flags.to_bytes(2, "little")
+    assert patched1[6:8] == (header1.check_type << 8).to_bytes(2, "little")
+    assert patched2[6:8] == (header2.check_type << 8).to_bytes(2, "little")
     assert patched1[6:8] != patched2[6:8]
 
 

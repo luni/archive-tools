@@ -143,6 +143,7 @@ def test_cli_entrypoint_integration(integration_dir, gz_files_cli, partial_gz_fi
         cmd,
         capture_output=True,
         text=True,
+        check=False,
     )
     # CLI returns 2 when there are missing files (which is expected for this test)
     assert proc.returncode == 2

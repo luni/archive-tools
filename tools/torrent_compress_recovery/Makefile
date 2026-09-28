@@ -1,45 +1,53 @@
 # Makefile
 
-.PHONY: all format check validate
+.PHONY: all format check validate test test-cov mutation vulture complexity xenon bandit pyright fix reformat-ruff fix-ruff
 
 # Default target: runs format and check
 all: validate test
 
 # Format the code using ruff
 format:
-	ruff format --check --diff .
+	uv run ruff format --check --diff .
 
 reformat-ruff:
-	ruff format .
+	uv run ruff format .
 
 # Check the code using ruff
 check:
-	ruff check .
+	uv run ruff check .
 
 fix-ruff:
-	ruff check . --fix
+	uv run ruff check . --fix
 
 fix: reformat-ruff fix-ruff
 	@echo "Updated code."
 
 test:
-	pytest
+	uv run pytest
+
+test-cov:
+	uv run pytest --cov --cov-report=xml --cov-report=term-missing
+
+# Mutation testing (mutates torrent_compress_recovery/, runs the test suite per mutant)
+mutation:
+	uv run mutmut run
+	uv run mutmut results
 
 vulture:
-	vulture . --exclude .venv,migrations,tests --make-whitelist
+	uv run vulture . --exclude .venv,migrations,tests,mutants --make-whitelist
 
 complexity:
-	radon cc . -a -nc
+	uv run radon cc . -a -nc -e mutants
 
 xenon:
-	xenon -b D -m B -a B .
+	uv run xenon -b D -m B -a B -i mutants .
 
 bandit:
-	bandit -c pyproject.toml -r .
+	uv run bandit -c pyproject.toml -r .
 
 pyright:
-	pyright
+	uv run pyright
 
 # Validate the code (format + check)
-validate: format complexity bandit pyright vulture
+validate: format check complexity xenon bandit pyright vulture
 	@echo "Validation passed. Your code is ready to push."

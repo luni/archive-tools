@@ -1,0 +1,18 @@
+default_stages: [pre-push]
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.2
+    hooks:
+      - id: ruff
+        files: ^tools/torrent_compress_recovery/
+        args: [--fix]
+      - id: ruff-format
+        files: ^tools/torrent_compress_recovery/
+
+  - repo: https://github.com/RobertCraigie/pyright-python
+    rev: v1.1.397
+    hooks:
+      - id: pyright
+        files: ^tools/torrent_compress_recovery/
+        pass_filenames: false
+        args: [--project, tools/torrent_compress_recovery]

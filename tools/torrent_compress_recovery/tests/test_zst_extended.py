@@ -1,35 +1,32 @@
 """Extended tests for ZSTD module to improve coverage."""
 
 from torrent_compress_recovery.zst import (
-    ZSTD_FRAME_HEADER_CHECKSUM_FLAG,
-    ZSTD_FRAME_HEADER_DICT_ID_FLAG,
-    ZSTD_FRAME_HEADER_RESERVED_FLAG,
-    ZSTD_FRAME_HEADER_SINGLE_SEGMENT_FLAG,
-    ZSTD_FRAME_HEADER_WINDOWLOG_MASK,
+    ZSTD_DESCRIPTOR_CHECKSUM,
+    ZSTD_DESCRIPTOR_DICT_ID_MASK,
+    ZSTD_DESCRIPTOR_RESERVED,
+    ZSTD_DESCRIPTOR_SINGLE_SEGMENT,
+    ZSTD_DESCRIPTOR_UNUSED,
 )
 
 
-def test_zstd_frame_header_constants():
-    """Test ZSTD frame header constants."""
-    assert ZSTD_FRAME_HEADER_WINDOWLOG_MASK == 0x0F
-    assert ZSTD_FRAME_HEADER_SINGLE_SEGMENT_FLAG == 0x20
-    assert ZSTD_FRAME_HEADER_CHECKSUM_FLAG == 0x10
-    assert ZSTD_FRAME_HEADER_DICT_ID_FLAG == 0x08
-    assert ZSTD_FRAME_HEADER_RESERVED_FLAG == 0x02
+def test_zstd_descriptor_constants():
+    """Test ZSTD frame descriptor constants match RFC 8878."""
+    assert ZSTD_DESCRIPTOR_SINGLE_SEGMENT == 0x20
+    assert ZSTD_DESCRIPTOR_UNUSED == 0x10
+    assert ZSTD_DESCRIPTOR_RESERVED == 0x08
+    assert ZSTD_DESCRIPTOR_CHECKSUM == 0x04
+    assert ZSTD_DESCRIPTOR_DICT_ID_MASK == 0x03
 
 
-def test_zstd_frame_header_flag_values():
-    """Test that frame header flags have expected values."""
-    # Verify the constants are powers of 2 (bit flags)
-    flags = [
-        ZSTD_FRAME_HEADER_WINDOWLOG_MASK,
-        ZSTD_FRAME_HEADER_SINGLE_SEGMENT_FLAG,
-        ZSTD_FRAME_HEADER_CHECKSUM_FLAG,
-        ZSTD_FRAME_HEADER_DICT_ID_FLAG,
-        ZSTD_FRAME_HEADER_RESERVED_FLAG,
-    ]
+def test_zstd_descriptor_flag_values():
+    """Test that descriptor flags have expected bit positions."""
+    for flag in [
+        ZSTD_DESCRIPTOR_SINGLE_SEGMENT,
+        ZSTD_DESCRIPTOR_UNUSED,
+        ZSTD_DESCRIPTOR_RESERVED,
+        ZSTD_DESCRIPTOR_CHECKSUM,
+    ]:
+        assert flag & (flag - 1) == 0  # Power of 2 check
 
-    # Each flag should be a power of 2 (except the mask)
-    for flag in flags:
-        if flag != ZSTD_FRAME_HEADER_WINDOWLOG_MASK:
-            assert flag & (flag - 1) == 0  # Power of 2 check
+    # Dictionary ID flag is a 2-bit field, not a single bit
+    assert ZSTD_DESCRIPTOR_DICT_ID_MASK & (ZSTD_DESCRIPTOR_DICT_ID_MASK - 1) != 0

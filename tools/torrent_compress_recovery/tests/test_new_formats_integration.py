@@ -1,4 +1,4 @@
-"""Integration tests for new XZ and Zstd compressors."""
+"""Integration tests for the XZ and Zstd formats."""
 
 from pathlib import Path
 

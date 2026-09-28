@@ -1,18 +1,14 @@
 """Tests for gzip header parsing, patching, and candidate generation."""
 
 import gzip
-import hashlib
 from pathlib import Path
 
 from torrent_compress_recovery.gzip import (
     GzipHeader,
-    find_matching_candidate,
     format_gzip_header,
     generate_gzip_candidates,
     parse_gzip_header,
     patch_gzip_header,
-    sha1_piece,
-    sha256_piece,
 )
 
 
@@ -83,44 +79,3 @@ def test_generate_gzip_candidates(temp_dir: Path):
         except Exception:
             # Some candidates may fail due to header patching; that's acceptable for this test
             pass
-
-
-def test_sha1_piece():
-    data = b"hello"
-    expected = hashlib.sha1(data).digest()
-    assert sha1_piece(data) == expected
-
-
-def test_sha256_piece():
-    data = b"world"
-    expected = hashlib.sha256(data).digest()
-    assert sha256_piece(data) == expected
-
-
-def test_find_matching_candidate():
-    candidates = [
-        ("a", b"foo"),
-        ("b", b"bar"),
-        ("c", b"baz"),
-    ]
-    target_hash = sha1_piece(b"bar")
-    match = find_matching_candidate(candidates, target_hash, piece_length=3, hash_algo="sha1")
-    assert match is not None
-    assert match[0] == "b"
-    assert match[1] == b"bar"
-    # No match
-    wrong_hash = sha1_piece(b"qux")
-    assert find_matching_candidate(candidates, wrong_hash, piece_length=3, hash_algo="sha1") is None
-
-
-def test_find_matching_candidate_sha256():
-    candidates = [
-        ("a", b"foo"),
-        ("b", b"bar"),
-        ("c", b"baz"),
-    ]
-    target_hash = sha256_piece(b"bar")
-    match = find_matching_candidate(candidates, target_hash, piece_length=3, hash_algo="sha256")
-    assert match is not None
-    assert match[0] == "b"
-    assert match[1] == b"bar"

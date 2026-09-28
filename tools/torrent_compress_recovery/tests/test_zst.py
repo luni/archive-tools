@@ -1,6 +1,5 @@
 """Tests for Zstandard header parsing, patching, and candidate generation."""
 
-import hashlib
 import shutil
 import subprocess
 from pathlib import Path
@@ -9,13 +8,10 @@ import pytest
 
 from torrent_compress_recovery.zst import (
     ZstdHeader,
-    find_matching_candidate,
     format_zstd_header,
     generate_zstd_candidates,
     parse_zstd_header,
     patch_zstd_header,
-    sha1_piece,
-    sha256_piece,
 )
 
 
@@ -61,20 +57,29 @@ def test_format_zstd_header():
 
 
 def test_patch_zstd_header(temp_dir: Path):
-    """Test patching Zstd header."""
-    # Create minimal Zstd-like data
-    zstd_magic = b"\x28\xb5\x2f\xfd"  # Zstd magic
-    frame_header = b"\x00\x00"  # Simple frame header
-    data = zstd_magic + frame_header + b"some compressed data"
+    """Test patching a Zstd frame header preserves frame structure."""
+    # Real layout: magic + descriptor(0x00 -> window desc present) + window_desc
+    zstd_magic = b"\x28\xb5\x2f\xfd"
+    descriptor = 0x00  # no FCS flag, no single-segment, no checksum, no dict
+    window_desc = 0x00  # exponent 0, mantissa 0 -> window_log 10
+    data = zstd_magic + bytes([descriptor, window_desc]) + b"some compressed data"
 
-    # Create new header with window_log 11 (which is 0x0B in hex)
-    new_header = ZstdHeader(window_log=11, single_segment=True, has_checksum=False, has_dict_id=True, has_reserved=False)
+    # Compatible patch: same layout, larger window -> descriptor unchanged,
+    # window descriptor updated (window_log 20 -> exponent 10 -> 10 << 3)
+    new_header = ZstdHeader(window_log=20, single_segment=False, has_checksum=False, has_dict_id=False, has_reserved=False)
     patched = patch_zstd_header(data, new_header)
+    assert patched[4] == descriptor
+    assert patched[5] == (20 - 10) << 3
+    assert patched[6:] == data[6:]
 
-    # Check that frame header was updated - window_log should be in the lower 4 bits
-    # The single_segment flag (0x20) should also be set
-    expected_frame_header = (11 & 0x0F) | 0x20  # window_log + single_segment flag
-    assert patched[4:6] == expected_frame_header.to_bytes(2, "little")
+    # Incompatible patch: toggling the checksum flag changes the trailer ->
+    # cannot be patched without recompressing, data must be returned unchanged
+    checksum_header = ZstdHeader(window_log=20, single_segment=False, has_checksum=True, has_dict_id=False, has_reserved=False)
+    assert patch_zstd_header(data, checksum_header) == data
+
+    # Layout change: single-segment needs a mandatory FCS byte we don't have
+    ss_header = ZstdHeader(window_log=20, single_segment=True, has_checksum=False, has_dict_id=False, has_reserved=False)
+    assert patch_zstd_header(data, ss_header) == data
 
 
 def test_generate_zstd_candidates(temp_dir: Path):
@@ -100,52 +105,6 @@ def test_generate_zstd_candidates(temp_dir: Path):
         assert len(data) > 0
 
 
-def test_sha1_piece():
-    """Test SHA1 piece hashing."""
-    data = b"hello"
-    expected = hashlib.sha1(data).digest()
-    assert sha1_piece(data) == expected
-
-
-def test_sha256_piece():
-    """Test SHA256 piece hashing."""
-    data = b"world"
-    expected = hashlib.sha256(data).digest()
-    assert sha256_piece(data) == expected
-
-
-def test_find_matching_candidate():
-    """Test finding matching candidate by hash."""
-    candidates = [
-        ("a", b"foo"),
-        ("b", b"bar"),
-        ("c", b"baz"),
-    ]
-    target_hash = sha1_piece(b"bar")
-    match = find_matching_candidate(candidates, target_hash, piece_length=3, hash_algo="sha1")
-    assert match is not None
-    assert match[0] == "b"
-    assert match[1] == b"bar"
-
-    # No match
-    wrong_hash = sha1_piece(b"qux")
-    assert find_matching_candidate(candidates, wrong_hash, piece_length=3, hash_algo="sha1") is None
-
-
-def test_find_matching_candidate_sha256():
-    """Test finding matching candidate by SHA256 hash."""
-    candidates = [
-        ("a", b"foo"),
-        ("b", b"bar"),
-        ("c", b"baz"),
-    ]
-    target_hash = sha256_piece(b"bar")
-    match = find_matching_candidate(candidates, target_hash, piece_length=3, hash_algo="sha256")
-    assert match is not None
-    assert match[0] == "b"
-    assert match[1] == b"bar"
-
-
 def test_parse_zstd_header_invalid_file(temp_dir: Path):
     """Test parsing header from invalid Zstd file."""
     invalid_file = temp_dir / "invalid.zst"
@@ -165,31 +124,23 @@ def test_parse_zstd_header_too_small(temp_dir: Path):
 
 
 def test_zstd_header_usage_in_compression():
-    """Test that header information is actually used in compression."""
-    # Create minimal Zstd-like data
-    zstd_magic = b"\x28\xb5\x2f\xfd"  # Zstd magic
-    frame_header = b"\x00\x00"  # Simple frame header
-    data = zstd_magic + frame_header + b"some compressed data"
+    """Test that header information is actually used in patching."""
+    # Real layout: magic + descriptor + window descriptor + payload
+    zstd_magic = b"\x28\xb5\x2f\xfd"
+    data = zstd_magic + b"\x00\x00" + b"some compressed data"
 
-    # Test different header settings produce different results
-    header1 = ZstdHeader(window_log=10, single_segment=True, has_checksum=True, has_dict_id=False, has_reserved=False)
-    header2 = ZstdHeader(window_log=15, single_segment=False, has_checksum=False, has_dict_id=True, has_reserved=False)
+    # Two compatible targets produce different window descriptors
+    header1 = ZstdHeader(window_log=10, single_segment=False, has_checksum=False, has_dict_id=False, has_reserved=False)
+    header2 = ZstdHeader(window_log=15, single_segment=False, has_checksum=False, has_dict_id=False, has_reserved=False)
 
     patched1 = patch_zstd_header(data, header1)
     patched2 = patch_zstd_header(data, header2)
 
-    # Results should be different
     assert patched1 != patched2
-    assert patched1[4:6] != patched2[4:6]
-
-    # Check specific bits are set correctly
-    # header1 should have single_segment (0x20) and checksum (0x10) flags
-    expected1 = (10 & 0x0F) | 0x20 | 0x10  # window_log + single_segment + checksum
-    assert patched1[4:6] == expected1.to_bytes(2, "little")
-
-    # header2 should have dict_id (0x08) flag
-    expected2 = (15 & 0x0F) | 0x08  # window_log + dict_id
-    assert patched2[4:6] == expected2.to_bytes(2, "little")
+    # Descriptor byte stays the same, window descriptor differs
+    assert patched1[4] == patched2[4] == 0x00
+    assert patched1[5] == (10 - 10) << 3
+    assert patched2[5] == (15 - 10) << 3
 
 
 def test_zstd_header_flags_parsing():

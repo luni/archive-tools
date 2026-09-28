@@ -210,4 +210,5 @@ __marimo__/
 
 tools/torrent_compress_recovery/tests/fixtures/real_data/
 tools/torrent_compress_recovery/tests/fixtures/real_data_v2/
+tools/torrent_compress_recovery/mutants/
 

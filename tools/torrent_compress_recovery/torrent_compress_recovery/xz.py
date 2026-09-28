@@ -1,8 +1,7 @@
 """XZ header parsing and brute-force generation utilities."""
 
-import hashlib
 import subprocess  # nosec B404
-import tempfile
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,15 +11,16 @@ XZ_HEADER_MIN_SIZE = 12  # Magic (6) + stream_flags (2) + crc32 (4)
 XZ_STREAM_FLAGS_SIZE = 2
 XZ_CRC32_SIZE = 4
 
-# XZ stream flags
-XZ_STREAM_FLAGS_NONE = 0
-XZ_STREAM_FLAGS_CRC64 = 1 << 0
-
-# XZ check types (for future expansion)
+# XZ check types
 XZ_CHECK_NONE = 0x00
 XZ_CHECK_CRC32 = 0x01
 XZ_CHECK_CRC64 = 0x04
 XZ_CHECK_SHA256 = 0x0A
+
+# XZ stream flags: byte 6 must be zero, byte 7's low nibble holds the check
+# type, so a flags word naming a check type has it shifted into the high byte
+XZ_STREAM_FLAGS_NONE = 0
+XZ_STREAM_FLAGS_CRC64 = XZ_CHECK_CRC64 << 8
 
 # Common compression levels for xz
 XZ_MIN_LEVEL = 0
@@ -64,19 +64,16 @@ def parse_xz_header(path: Path) -> XzHeader | None:
     if len(data) < XZ_HEADER_MIN_SIZE or not data.startswith(XZ_MAGIC):
         return None
 
-    # Extract stream flags (bytes 6-7)
-    flags_bytes = data[6:8]
-    flags = int.from_bytes(flags_bytes, "little")
+    # Stream flags (bytes 6-7): byte 6 must be 0, check type is the low
+    # nibble of byte 7. Bytes 8-11 hold CRC32 over the flags themselves.
+    if data[6] != 0 or data[7] & 0xF0:
+        return None
+    if zlib.crc32(data[6:8]) & 0xFFFFFFFF != int.from_bytes(data[8:12], "little"):
+        return None
 
-    # Extract check type from the second byte of stream flags
-    # Lower 4 bits are check type, upper bits are other flags
-    check_type = flags & 0x0F
-    stream_flags = flags & 0xF0
-
-    # Note: This is a simplified CRC check - real XZ uses CRC32
-    # For our purposes, we'll assume the header is valid if magic matches
-
-    has_crc64 = bool(stream_flags & XZ_STREAM_FLAGS_CRC64)
+    flags = int.from_bytes(data[6:8], "little")
+    check_type = data[7] & 0x0F
+    has_crc64 = check_type == XZ_CHECK_CRC64
 
     return XzHeader(flags=flags, has_crc64=has_crc64, check_type=check_type)
 
@@ -101,35 +98,33 @@ def patch_xz_header(data: bytes, header: XzHeader) -> bytes:
     if len(data) < XZ_HEADER_MIN_SIZE or not data.startswith(XZ_MAGIC):
         return data
 
-    # Replace the stream flags
+    # Replace the stream flags and recompute the CRC32 that covers them,
+    # otherwise the patched header fails xz's own consistency check.
+    # Byte 6 must be zero; the check type lives in byte 7's low nibble.
     patched = bytearray(data)
-    patched[6:8] = header.flags.to_bytes(XZ_STREAM_FLAGS_SIZE, "little")
-
-    # Note: In a real implementation, we'd need to recalculate the CRC32
-    # For our purposes, we'll leave the original CRC
+    patched[6:8] = (header.check_type << 8).to_bytes(XZ_STREAM_FLAGS_SIZE, "little")
+    patched[8:12] = (zlib.crc32(patched[6:8]) & 0xFFFFFFFF).to_bytes(XZ_CRC32_SIZE, "little")
 
     return bytes(patched)
 
 
-def sha1_piece(data: bytes) -> bytes:
-    """Return SHA-1 hash of data."""
-    return hashlib.sha1(data).digest()
+_XZ_CHECK_NAMES = {XZ_CHECK_NONE: "none", XZ_CHECK_CRC32: "crc32", XZ_CHECK_CRC64: "crc64", XZ_CHECK_SHA256: "sha256"}
 
 
 def _generate_header_match_candidate(src_bytes: bytes, header: XzHeader) -> tuple[str, bytes] | None:
     """Generate a candidate that matches the exact header settings."""
-    with tempfile.NamedTemporaryFile(delete=False) as tmp:
-        tmp_path = Path(tmp.name)
-        try:
-            # Use xz command to compress
-            cmd = ["xz", "-c", "--stdout"]
-            proc = subprocess.run(cmd, input=src_bytes, capture_output=True, check=False)  # nosec B603
-            if proc.returncode == 0:
-                data = proc.stdout
-                data = patch_xz_header(data, header)
-                return ("header_match", data)
-        finally:
-            tmp_path.unlink()
+    cmd = ["xz", "-c", "--stdout"]
+    check_name = _XZ_CHECK_NAMES.get(header.check_type)
+    if check_name:
+        cmd.append(f"--check={check_name}")
+    try:
+        proc = subprocess.run(cmd, input=src_bytes, capture_output=True, check=False)  # nosec B603
+    except FileNotFoundError:
+        return None
+    if proc.returncode == 0:
+        data = proc.stdout
+        data = patch_xz_header(data, header)
+        return ("header_match", data)
     return None
 
 
@@ -168,8 +163,11 @@ def _generate_tool_candidate(src: Path, tool: str, level: int, header: XzHeader 
         return None
 
 
-def generate_xz_candidates(src: Path, header: XzHeader | None) -> list[tuple[str, bytes]]:
-    """Generate candidate XZ bytes for a source file using common tools/settings."""
+def generate_xz_candidates(src: Path, header: XzHeader | None, *, brute: bool = True) -> list[tuple[str, bytes]]:
+    """Generate candidate XZ bytes for a source file using common tools/settings.
+
+    With ``brute=False`` only the header-guided candidate is produced.
+    """
     candidates: list[tuple[str, bytes]] = []
     src_bytes = src.read_bytes()
 
@@ -178,6 +176,9 @@ def generate_xz_candidates(src: Path, header: XzHeader | None) -> list[tuple[str
         header_match = _generate_header_match_candidate(src_bytes, header)
         if header_match:
             candidates.append(header_match)
+
+    if not brute:
+        return candidates
 
     # 2) Brute-force common tools/levels
     tools = _get_available_tools()
@@ -189,25 +190,3 @@ def generate_xz_candidates(src: Path, header: XzHeader | None) -> list[tuple[str
                 candidates.append(candidate)
 
     return candidates
-
-
-def sha256_piece(data: bytes) -> bytes:
-    """Return SHA-256 hash of data."""
-    return hashlib.sha256(data).digest()
-
-
-def find_matching_candidate(
-    candidates: list[tuple[str, bytes]],
-    target_piece_hash: bytes,
-    piece_length: int,
-    hash_algo: str = "sha1",
-) -> tuple[str, bytes] | None:
-    """Return the first candidate whose first piece hash matches."""
-    hash_fn = sha1_piece if hash_algo == "sha1" else sha256_piece
-    for label, data in candidates:
-        if len(data) < piece_length:
-            continue
-        piece = data[:piece_length]
-        if hash_fn(piece) == target_piece_hash:
-            return label, data
-    return None

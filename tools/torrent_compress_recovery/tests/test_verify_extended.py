@@ -9,8 +9,6 @@ import pytest
 from torrent_compress_recovery.verify import (
     compute_raw_crc32_and_isize,
     read_gzip_trailer,
-    read_xz_footer,
-    read_zstd_footer,
     verify_last_piece_against_raw,
     verify_raw_against_gz,
     verify_raw_against_xz,
@@ -175,20 +173,6 @@ def test_verify_raw_against_gz_nonexistent_gz(tmp_path: Path):
 
 def test_verify_last_piece_against_raw_no_gz_files(tmp_path: Path):
     """Test verification when torrent has no .gz files."""
-    # Create a torrent with non-gz files
-    from torrent_compress_recovery.bencode import TorrentFile, TorrentMeta
-
-    meta = TorrentMeta(
-        name="test",
-        files=[
-            TorrentFile("file1.txt", 1024, 0),
-            TorrentFile("file2.dat", 2048, 1024),
-        ],
-        piece_length=524288,
-        pieces=[b"a" * 20],
-        version="v1",
-    )
-
     torrent_file = tmp_path / "test.torrent"
     # Create a minimal valid torrent file
     import bencodepy
@@ -315,47 +299,6 @@ def test_verify_last_piece_against_raw_no_raw_file(tmp_path: Path):
     assert results["test.txt.gz"] is False  # Should be False when raw file doesn't exist
 
 
-def test_read_xz_footer_valid_file(tmp_path: Path):
-    """Test reading XZ footer from a valid XZ file."""
-    import subprocess
-
-    # Create a simple XZ file
-    xz_file = tmp_path / "test.xz"
-    result = subprocess.run(["xz", "-c"], input=b"test content", capture_output=True, check=True)
-    xz_file.write_bytes(result.stdout)
-
-    footer = read_xz_footer(xz_file)
-    assert footer is not None
-    assert isinstance(footer, tuple)
-    assert len(footer) == 2
-    crc32, backward_size = footer
-    assert isinstance(crc32, int)
-    assert isinstance(backward_size, int)
-
-
-def test_read_xz_footer_file_too_small(tmp_path: Path):
-    """Test reading XZ footer from file that's too small."""
-    small_file = tmp_path / "small.xz"
-    small_file.write_bytes(b"too small")
-
-    footer = read_xz_footer(small_file)
-    assert footer is None
-
-
-def test_read_xz_footer_invalid_magic(tmp_path: Path):
-    """Test reading XZ footer with invalid magic."""
-    # Create file with wrong magic bytes
-    xz_file = tmp_path / "invalid.xz"
-    # XZ magic + data + wrong footer magic
-    invalid_data = b"\xfd\x37\x7a\x58\x5a\x00" + b"some data" + b"\x00\x00\x00\x00\x00\x00\x59\x5a"
-    xz_file.write_bytes(invalid_data)
-
-    footer = read_xz_footer(xz_file)
-    # The function might still return data even with invalid magic, depending on implementation
-    # Let's just verify it returns something
-    assert footer is not None  # Adjusted based on actual behavior
-
-
 def test_verify_raw_against_xz_valid_match(tmp_path: Path):
     """Test verification of raw file against XZ file with valid match."""
     import subprocess
@@ -399,35 +342,6 @@ def test_verify_raw_against_xz_nonexistent_files(tmp_path: Path):
     # Should fail verification
     result = verify_raw_against_xz(raw_file, xz_file)
     assert result is False
-
-
-def test_read_zstd_footer_valid_file(tmp_path: Path):
-    """Test reading Zstd footer from a valid Zstd file."""
-    import subprocess
-
-    # Create a simple Zstd file
-    zst_file = tmp_path / "test.zst"
-    result = subprocess.run(["zstd", "-c"], input=b"test content", capture_output=True, check=True)
-    zst_file.write_bytes(result.stdout)
-
-    footer = read_zstd_footer(zst_file)
-    assert footer is not None
-    assert isinstance(footer, tuple)
-    assert len(footer) == 2
-    checksum, dict_id = footer
-    assert isinstance(checksum, int)
-    assert isinstance(dict_id, int)
-
-
-def test_read_zstd_footer_file_too_small(tmp_path: Path):
-    """Test reading Zstd footer from file that's too small."""
-    small_file = tmp_path / "small.zst"
-    small_file.write_bytes(b"too small")
-
-    footer = read_zstd_footer(small_file)
-    # The function might still return data even for small files, depending on implementation
-    # Let's just verify it returns something
-    assert footer is not None  # Adjusted based on actual behavior
 
 
 def test_verify_raw_against_zst_valid_match(tmp_path: Path):

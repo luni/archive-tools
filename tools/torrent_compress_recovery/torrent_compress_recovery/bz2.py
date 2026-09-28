@@ -1,7 +1,6 @@
 """Bzip2 header parsing and brute-force generation utilities."""
 
 import bz2
-import hashlib
 import subprocess  # nosec B404
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,7 +42,7 @@ def parse_bzip2_header(path: Path) -> Bzip2Header | None:
         return None
 
     # Extract compression level from the 4th byte
-    if len(data) < BZIP2_HEADER_SIZE or data[BZIP2_LEVEL_BYTE_POS] < ord(str(BZIP2_MIN_LEVEL)) or data[BZIP2_LEVEL_BYTE_POS] > ord(str(BZIP2_MAX_LEVEL)):
+    if data[BZIP2_LEVEL_BYTE_POS] < ord(str(BZIP2_MIN_LEVEL)) or data[BZIP2_LEVEL_BYTE_POS] > ord(str(BZIP2_MAX_LEVEL)):
         return None
 
     level = int(data[BZIP2_LEVEL_BYTE_POS : BZIP2_LEVEL_BYTE_POS + 1].decode("ascii"))
@@ -60,24 +59,11 @@ def format_bzip2_header(header: Bzip2Header) -> str:
     return "\n".join(lines)
 
 
-def patch_bzip2_header(data: bytes, header: Bzip2Header) -> bytes:
-    """Patch bzip2 header to match the provided header (compression level)."""
-    if len(data) < BZIP2_HEADER_SIZE or not data.startswith(BZIP2_MAGIC):
-        return data
+def generate_bzip2_candidates(src: Path, header: Bzip2Header | None, *, brute: bool = True) -> list[tuple[str, bytes]]:
+    """Generate candidate bzip2 bytes for a source file using common tools/settings.
 
-    # Replace the compression level byte
-    patched = bytearray(data)
-    patched[BZIP2_LEVEL_BYTE_POS] = ord(str(header.level))
-    return bytes(patched)
-
-
-def sha1_piece(data: bytes) -> bytes:
-    """Return SHA-1 hash of data."""
-    return hashlib.sha1(data).digest()
-
-
-def generate_bzip2_candidates(src: Path, header: Bzip2Header | None) -> list[tuple[str, bytes]]:
-    """Generate candidate bzip2 bytes for a source file using common tools/settings."""
+    With ``brute=False`` only the header-guided candidate is produced.
+    """
     candidates: list[tuple[str, bytes]] = []
     src_bytes = src.read_bytes()
 
@@ -90,6 +76,9 @@ def generate_bzip2_candidates(src: Path, header: Bzip2Header | None) -> list[tup
         except (OSError, ValueError):
             # Handle compression errors gracefully
             pass
+
+    if not brute:
+        return candidates
 
     # 2) Brute-force common tools/levels
     tools = ["bzip2"]
@@ -115,25 +104,3 @@ def generate_bzip2_candidates(src: Path, header: Bzip2Header | None) -> list[tup
                 continue
 
     return candidates
-
-
-def sha256_piece(data: bytes) -> bytes:
-    """Return SHA-256 hash of data."""
-    return hashlib.sha256(data).digest()
-
-
-def find_matching_candidate(
-    candidates: list[tuple[str, bytes]],
-    target_piece_hash: bytes,
-    piece_length: int,
-    hash_algo: str = "sha1",
-) -> tuple[str, bytes] | None:
-    """Return the first candidate whose first piece hash matches."""
-    hash_fn = sha1_piece if hash_algo == "sha1" else sha256_piece
-    for label, data in candidates:
-        if len(data) < piece_length:
-            continue
-        piece = data[:piece_length]
-        if hash_fn(piece) == target_piece_hash:
-            return label, data
-    return None
